@@ -1,70 +1,42 @@
-# Getting Started with Create React App
+# 🐸 Frog Jump Web - Real-time Leaderboard
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+![React](https://img.shields.io/badge/React-19-blue.svg)
+![Supabase](https://img.shields.io/badge/Backend-Supabase-green.svg)
+![Vercel](https://img.shields.io/badge/Deploy-Vercel-black.svg)
 
-## Available Scripts
+`FrogJumpGame`의 점수를 전 세계 사용자들과 공유하고 경쟁할 수 있는 공식 웹 플랫폼입니다.
 
-In the project directory, you can run:
+## ✨ 주요 기능
+- **실시간 리더보드**: 게임에서 업로드된 점수를 실시간으로 확인.
+- **사용자 관리**: 회원가입 및 로그인을 통한 개인 프로필 관리 (Supabase Auth).
+- **반응형 디자인**: PC와 모바일 어디서나 쾌적하게 랭킹 확인 가능.
 
-### `npm start`
+## 🛠️ 기술 스택
+- **Frontend**: React 19, React Router v7
+- **Backend**: Supabase (Database, Authentication)
+- **Styling**: Vanilla CSS (Custom Designs)
+- **Deployment**: Vercel
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+## 🚀 시작하기
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+### 1. 환경 변수 설정
+`.env` 파일을 생성하고 Supabase 프로젝트 정보를 입력하세요.
+```env
+REACT_APP_SUPABASE_URL=your_supabase_url
+REACT_APP_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
 
-### `npm test`
+### 2. 패키지 설치 및 실행
+```bash
+npm install
+npm start
+```
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## 📁 프로젝트 구조
+- **`src/pages/`**: 주요 페이지 컴포넌트 (Login, Register, Main).
+- **`src/supabaseClient.js`**: Supabase 연결 설정.
+- **`public/`**: 정적 자산 및 아이콘.
 
-### `npm run build`
-
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
-
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
-
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
-
-### `npm run eject`
-
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
-
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+## 🔗 관련 프로젝트
+- **[FrogJumpGame](https://github.com/your-repo/FrogJumpGame)**: 파이썬 기반 아케이드 게임 본체.
+- **[FrogJump Server](https://github.com/your-repo/frogjump-leaderboard)**: 백엔드 API 서비스.
