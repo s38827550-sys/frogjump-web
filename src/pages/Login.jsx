@@ -218,7 +218,7 @@ function Login() {
 
     const { data: userData, error: fetchError } = await supabase
       .from('users')
-      .select('email')
+      .select('email, nickname')
       .eq('username', username)
       .single();
 
@@ -256,6 +256,27 @@ function Login() {
         return;
       }
     }
+
+    // 토큰을 로컬스토리지 대신 파일로 저장하는 API 호출
+    const { data: { session } } = await supabase.auth.getSession();
+    const { data: userProfile } = await supabase
+      .from('users')
+      .select('nickname')
+      .eq('id', session.user.id)
+      .single();
+
+    const tokenData = {
+      access_token: session.access_token,
+      user_id: session.user.id,
+      nickname: userProfile?.nickname || username,
+    };
+
+    // 토큰을 파일로 저장 (게임에서 읽을 수 있도록)
+    const blob = new Blob([JSON.stringify(tokenData)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = '.frogjump_token.json';
+    a.click();
 
     navigate('/main');
   };
