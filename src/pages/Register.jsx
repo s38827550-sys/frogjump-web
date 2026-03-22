@@ -213,6 +213,11 @@ function Register() {
       .from('users').select('id').eq('username', form.username).single();
     if (existUser) { setError('이미 사용중인 아이디입니다.'); setLoading(false); return; }
 
+    // 닉네임 중복 확인
+    const { data: existNick } = await supabase
+      .from('users').select('id').eq('nickname', form.nickname).single();
+    if (existNick) { setError('이미 사용중인 닉네임입니다.'); setLoading(false); return; }
+
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email: form.email, password: form.password,
     });
@@ -247,8 +252,8 @@ setLoading(false);
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px', zIndex: 10 }}>
         <img src={frogNormal} alt="frog" style={{ width: '60px', imageRendering: 'pixelated', filter: 'drop-shadow(0 0 8px rgba(0,0,0,0.8))' }} />
-        <div style={{ fontFamily: '"Fredoka One", cursive', fontSize: '2.5rem', color: '#f5c842', textShadow: '0 0 20px #f5c842, 4px 4px 0 #1a4a00', letterSpacing: '4px' }}>
-          회원가입
+        <div style={{ fontFamily: "'Jua', sans-serif", fontSize: '2.5rem', color: '#f5c842', textShadow: '0 0 20px #f5c842, 4px 4px 0 #1a4a00', letterSpacing: '4px' }}>
+          Sign Up
         </div>
       </div>
 
@@ -328,7 +333,7 @@ const buttonStyle = {
   padding: '12px', borderRadius: '8px', border: 'none',
   background: '#4a7c3f', color: '#fff', fontSize: '1rem',
   cursor: 'pointer', fontWeight: 'bold', marginTop: '8px',
-  transition: 'background 0.2s',
+  transition: 'background 0.2s', fontFamily: "'Jua', sans-serif",
 };
 
 export default Register;

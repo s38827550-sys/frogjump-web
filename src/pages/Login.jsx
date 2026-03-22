@@ -203,6 +203,15 @@ function Login() {
   const [error, setError] = useState('');
   const navigate = useNavigate();
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    async function checkUser() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) navigate('/main');
+    }
+    checkUser();
+  }, [navigate]);
+
   const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
@@ -226,6 +235,26 @@ function Login() {
     if (loginError) {
       setError('비밀번호가 올바르지 않습니다.');
       return;
+    }
+
+    // 탈퇴한 유저인지 확인
+    const { data: userStatus } = await supabase
+      .from('users')
+      .select('status, deleted_at')
+      .eq('username', username)
+      .single();
+
+    if (userStatus?.status === 'deleted') {
+      const deletedAt = new Date(userStatus.deleted_at);
+      const now = new Date();
+      const hoursDiff = (now - deletedAt) / (1000 * 60 * 60);
+
+      if (hoursDiff < 24) {
+        const hoursLeft = Math.ceil(24 - hoursDiff);
+        setError(`탈퇴한 계정이에요. ${hoursLeft}시간 후에 재가입 가능합니다.`);
+        await supabase.auth.signOut();
+        return;
+      }
     }
 
     navigate('/main');
@@ -265,7 +294,7 @@ function Login() {
           style={{ width: '60px', imageRendering: 'pixelated', filter: 'drop-shadow(0 0 8px rgba(0,0,0,0.8))' }}
         />
         <div style={{
-          fontFamily: '"Fredoka One", cursive',
+          fontFamily: "'Jua', sans-serif",
           fontSize: '3.5rem',
           color: '#f5c842',
           textShadow: '0 0 20px #f5c842, 4px 4px 0 #1a4a00, -2px -2px 0 #1a4a00',
@@ -340,6 +369,7 @@ const buttonStyle = {
   fontWeight: 'bold',
   marginTop: '8px',
   transition: 'background 0.2s',
+  fontFamily: "'Jua', sans-serif",
 };
 
 export default Login;
