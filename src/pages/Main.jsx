@@ -12,6 +12,7 @@ function Main() {
   const [hasNewPatch, setHasNewPatch] = useState(false);
   const [hasNewPost, setHasNewPost] = useState(false);
   const navigate = useNavigate();
+  const [latestPatch, setLatestPatch] = useState(null);
 
   useEffect(() => {
     const trackOnline = async () => {
@@ -45,6 +46,7 @@ function Main() {
         clearInterval(interval);
         window.removeEventListener('beforeunload', handleUnload);
       };
+      
     };
     trackOnline();
   }, []);
@@ -58,6 +60,18 @@ function Main() {
     };
     getUser();
     checkNew();
+
+    // 최신 패치노트 가져오기 ← 여기에 추가
+    const fetchLatestPatch = async () => {
+      const { data: patch } = await supabase
+        .from('patch_notes')
+        .select('title, version')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (patch) setLatestPatch(patch);
+    };
+    fetchLatestPatch();
   }, [navigate]);
 
   const checkNew = async () => {
@@ -120,6 +134,38 @@ function Main() {
           <img src={frogNormal} alt="frog" style={{ width: '32px', imageRendering: 'pixelated' }} />
           Frog Jump
         </div>
+        {/* 상단바 공지 */}
+        {latestPatch && (
+          <div style={{
+            flex: 1, overflow: 'hidden',
+            margin: '0 24px',
+          }}>
+            <div style={{ display: 'flex', width: '200%' }}>
+              <div
+                className="marquee"
+                onClick={() => setActiveTab('패치노트')}
+                style={{
+                  color: '#7ae8ff', fontSize: '0.85rem',
+                  cursor: 'pointer', display: 'inline-block',
+                  width: '50%',
+                }}
+              >
+                📢 [{latestPatch.version}] {latestPatch.title}
+              </div>
+              <div
+                className="marquee"
+                onClick={() => setActiveTab('패치노트')}
+                style={{
+                  color: '#7ae8ff', fontSize: '0.85rem',
+                  cursor: 'pointer', display: 'inline-block',
+                  width: '50%',
+                }}
+              >
+                📢 [{latestPatch.version}] {latestPatch.title}
+              </div>
+            </div>
+          </div>
+        )}
         <button onClick={handleLogout} style={{
           padding: '6px 16px', borderRadius: '8px',
           border: '1px solid #4a7c3f', background: 'rgba(0,0,0,0.5)',
