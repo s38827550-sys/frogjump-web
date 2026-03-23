@@ -1190,18 +1190,20 @@ function BoardTab({ profile }) {
           {selectedPost.content}
         </div>
 
-        {selectedPost.user_id === profile.id && (
+        {(selectedPost.user_id === profile.id || profile.role === 'admin') && (
           <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-            <button onClick={() => {
-              setEditPost(!editPost);
-              setEditTitle(selectedPost.title);
-              setEditContent(selectedPost.content);
-            }} style={{
-              padding: '8px 20px', borderRadius: '8px',
-              border: '1px solid #4a7c3f', background: 'transparent',
-              color: '#4a7c3f', cursor: 'pointer', fontSize: '0.9rem',
-              fontFamily: "'Jua', sans-serif",
-            }}>수정</button>
+            {selectedPost.user_id === profile.id && (
+              <button onClick={() => {
+                setEditPost(!editPost);
+                setEditTitle(selectedPost.title);
+                setEditContent(selectedPost.content);
+              }} style={{
+                padding: '8px 20px', borderRadius: '8px',
+                border: '1px solid #4a7c3f', background: 'transparent',
+                color: '#4a7c3f', cursor: 'pointer', fontSize: '0.9rem',
+                fontFamily: "'Jua', sans-serif",
+              }}>수정</button>
+            )}
             <button onClick={() => handleDelete(selectedPost.id)} style={{
               padding: '8px 20px', borderRadius: '8px',
               border: '1px solid #ff4444', background: 'transparent',
@@ -1210,6 +1212,7 @@ function BoardTab({ profile }) {
             }}>삭제</button>
           </div>
         )}
+        
 
         {editPost && (
           <div style={{
