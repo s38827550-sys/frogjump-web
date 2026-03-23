@@ -1,43 +1,73 @@
-# 🐸 Frog Jump Web - Real-time Leaderboard
+# 🐸 Frog Jump - Official Web Platform
 
-![React](https://img.shields.io/badge/React-19-blue.svg)
-![Supabase](https://img.shields.io/badge/Backend-Supabase-green.svg)
-![Vercel](https://img.shields.io/badge/Deploy-Vercel-black.svg)
+FrogJump 게임의 공식 웹 플랫폼입니다.
+회원가입 후 게임을 다운로드하고 전 세계 플레이어들과 랭킹을 경쟁해보세요!
 
-`FrogJumpGame`의 점수를 전 세계 사용자들과 공유하고 경쟁할 수 있는 공식 웹 플랫폼입니다.
+---
 
 ## ✨ 주요 기능
-- **실시간 리더보드**: 게임에서 업로드된 점수를 실시간으로 확인하고 랭킹 경쟁.
-- **Supabase 인증 연동**: 회원가입 및 로그인을 통해 사용자별 데이터를 안전하게 관리.
-- **세련된 UI/UX**: 동적 배경과 반응형 레이아웃으로 PC와 모바일 완벽 지원.
-- **최신 기술 스택**: React 19와 React Router v7을 활용한 고성능 웹 서비스.
+
+- **회원 시스템**: 회원가입/로그인, 닉네임 변경, 회원탈퇴 (30일 데이터 보관)
+- **게임 다운로드**: 웹사이트 로그인 후 게임 exe 다운로드 및 계정 연동 플레이
+- **실시간 랭킹**: 유저별 최고점수 기반 글로벌 랭킹보드
+- **출석체크**: 매일 출석 시 포인트 +3 지급
+- **포인트 시스템**: 출석/랭킹 보너스로 포인트 획득, 닉네임 변경에 사용
+- **자유게시판**: 글쓰기/댓글/수정/삭제
+- **패치노트**: 관리자 전용 작성, 유저 댓글 가능
+- **접속유저**: 현재 접속 중인 유저 실시간 표시
+
+---
 
 ## 🛠️ 기술 스택
-- **Frontend**: React 19, React Router v7
-- **Backend**: Supabase (Database, Authentication)
-- **Styling**: Vanilla CSS (Custom Designs)
-- **Deployment**: Vercel
 
-## 🚀 시작하기
+| 분류 | 기술 |
+|------|------|
+| Frontend | React, React Router |
+| Database | Supabase (PostgreSQL) |
+| Auth | Supabase Auth (JWT) |
+| Styling | Vanilla CSS, Jua 폰트 |
+| Deployment | Vercel |
 
-### 1. 환경 변수 설정
-`.env` 파일을 생성하고 Supabase 프로젝트 정보를 입력하세요.
-```env
+---
+
+## 🔗 관련 프로젝트
+
+- **[FrogJumpGame](https://github.com/s38827550-sys/FrogJumpGame)** - Python/Pygame 기반 아케이드 게임
+- **[FrogJump Server](https://github.com/s38827550-sys/frogjump-leaderboard)** - FastAPI 백엔드 서버
+
+---
+
+## 🚀 로컬 실행
+
+1. 환경 변수 설정 (`.env`)
+```
 REACT_APP_SUPABASE_URL=your_supabase_url
 REACT_APP_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
 
-### 2. 패키지 설치 및 실행
-```bash
+2. 패키지 설치 및 실행
+```
 npm install
 npm start
 ```
 
-## 📁 프로젝트 구조
-- **`src/pages/`**: 주요 서비스 페이지 (Login.jsx, Register.jsx, Main.jsx).
-- **`src/assets/`**: 웹용 이미지 리소스 및 아이콘.
-- **`src/supabaseClient.js`**: Supabase 연결 설정.
+---
 
-## 🔗 관련 프로젝트
-- **[FrogJumpGame](https://github.com/your-repo/FrogJumpGame)**: 파이썬 기반 아케이드 게임 본체.
-- **[FrogJump Server](https://github.com/your-repo/frogjump-leaderboard)**: 백엔드 API 서비스.
+## 📁 프로젝트 구조
+```
+src/
+├── pages/
+│   ├── Login.jsx       # 로그인 (개구리 물리 애니메이션)
+│   ├── Register.jsx    # 회원가입 (개인정보처리방침 동의)
+│   └── Main.jsx        # 메인 (홈/랭킹/패치노트/게시판/접속유저)
+├── assets/             # 이미지 리소스
+└── supabaseClient.js   # Supabase 연결 설정
+```
+
+---
+
+## 🔐 보안
+
+- Supabase RLS (Row Level Security) 적용
+- JWT 토큰 기반 인증
+- 개인정보처리방침 동의 기록 보관
