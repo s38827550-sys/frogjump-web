@@ -1,12 +1,5 @@
 # 🐸 Frog Jump - Official Web Platform
 
-> 🌐 **[https://frogjump-web.vercel.app](https://frogjump-web.vercel.app)**
-
-FrogJump 게임의 공식 웹 플랫폼입니다.
-회원가입 후 게임을 다운로드하고 전 세계 플레이어들과 랭킹을 경쟁해보세요!
-
-# 🐸 Frog Jump - Official Web Platform
-
 FrogJump 게임의 공식 웹 플랫폼입니다.
 회원가입 후 게임을 다운로드하고 전 세계 플레이어들과 랭킹을 경쟁해보세요!
 
@@ -53,7 +46,7 @@ REACT_APP_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
 
 2. 패키지 설치 및 실행
-```
+```bash
 npm install
 npm start
 ```
@@ -73,8 +66,8 @@ src/
 
 ---
 
-## 🔐 보안
+## 🔐 보안 및 정책
 
-- Supabase RLS (Row Level Security) 적용
-- JWT 토큰 기반 인증
-- 개인정보처리방침 동의 기록 보관
+- **Supabase RLS**: Row Level Security 적용으로 데이터 보호
+- **인증**: JWT 토큰 기반 인증 시스템
+- **개인정보**: 회원가입 시 개인정보처리방침 동의 필수화
