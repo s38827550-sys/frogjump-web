@@ -1,6 +1,6 @@
 # 🐸 Frog Jump - Official Web Platform
 
-> 🌐 **[https://frogjump-kowalv3ty-s38827550s-projects.vercel.app](https://frogjump-kowalv3ty-s38827550s-projects.vercel.app)**
+> 🌐 **[frogjump-web.vercel.app](frogjump-web.vercel.app)**
 
 FrogJump 게임의 공식 웹 플랫폼입니다.
 회원가입 후 게임을 다운로드하고 전 세계 플레이어들과 랭킹을 경쟁해보세요!
