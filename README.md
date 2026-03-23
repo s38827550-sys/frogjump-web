@@ -1,5 +1,12 @@
 # 🐸 Frog Jump - Official Web Platform
 
+> 🌐 **[https://frogjump-web.vercel.app](https://frogjump-web.vercel.app)**
+
+FrogJump 게임의 공식 웹 플랫폼입니다.
+회원가입 후 게임을 다운로드하고 전 세계 플레이어들과 랭킹을 경쟁해보세요!
+
+# 🐸 Frog Jump - Official Web Platform
+
 FrogJump 게임의 공식 웹 플랫폼입니다.
 회원가입 후 게임을 다운로드하고 전 세계 플레이어들과 랭킹을 경쟁해보세요!
 
