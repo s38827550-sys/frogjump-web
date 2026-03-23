@@ -760,7 +760,7 @@ function PatchTab({ profile }) {
           borderRadius: '12px', padding: '16px', marginBottom: '16px',
         }}>
           <input
-            placeholder="버전 (예: v1.1)"
+            placeholder="버전 (예: v1.2)"
             value={version}
             onChange={e => setVersion(e.target.value)}
             style={{
