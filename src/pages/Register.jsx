@@ -296,7 +296,8 @@ setLoading(false);
             개인정보처리방침<br /><br />
             본 서비스는 회원가입 시 이름, 이메일, 생년월일, 닉네임, 아이디를 수집합니다.
             수집된 정보는 서비스 제공 및 운영 목적으로만 사용되며 제3자에게 제공되지 않습니다.
-            회원 탈퇴 시 모든 개인정보는 즉시 삭제됩니다.
+            회원 탈퇴 시 개인정보는 30일간 보관 후 완전 삭제됩니다.
+            탈퇴 후 24시간 동안 재가입이 제한됩니다.
           </div>
 
           <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#ccc', fontSize: '0.9rem', cursor: 'pointer' }}>

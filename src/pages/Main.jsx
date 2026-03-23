@@ -192,9 +192,15 @@ function RankingSummary() {
   const [rankings, setRankings] = useState([]);
 
   useEffect(() => {
-    fetch('https://frogjump-leaderboard.onrender.com/leaderboard?limit=5')
-      .then(r => r.json())
-      .then(data => setRankings(data || []));
+    const fetchRankings = async () => {
+      const { data } = await supabase
+        .from('user_best_scores')
+        .select('score, users(nickname)')
+        .order('score', { ascending: false })
+        .limit(5);
+      setRankings(data || []);
+    };
+    fetchRankings();
   }, []);
 
   return (
@@ -216,7 +222,7 @@ function RankingSummary() {
                 <td style={{ color: i === 0 ? '#f5c842' : i === 1 ? '#ccc' : i === 2 ? '#cd7f32' : '#888', padding: '10px', textAlign: 'center', width: '40px' }}>
                   {i === 0 ? '🏆' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}
                 </td>
-                <td style={{ color: '#fff', padding: '10px' }}>{r.nickname}</td>
+                <td style={{ color: '#fff', padding: '10px' }}>{r.users?.nickname}</td>
                 <td style={{ color: '#f5c842', padding: '10px', textAlign: 'right' }}>{r.score}점</td>
               </tr>
             ))}
@@ -226,17 +232,149 @@ function RankingSummary() {
     </div>
   );
 }
+function CalendarGrid({ attended, onAttendance }) {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = today.getMonth();
+  const todayDate = today.getDate();
+
+  // 이번 달 1일의 요일 (월요일 시작으로 조정)
+  const firstDay = new Date(year, month, 1).getDay();
+  const adjustedFirstDay = firstDay === 0 ? 6 : firstDay - 1;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const cells = [];
+
+  // 빈 칸 채우기
+  for (let i = 0; i < adjustedFirstDay; i++) {
+    cells.push(<div key={`empty-${i}`} />);
+  }
+
+  // 날짜 채우기
+  for (let d = 1; d <= daysInMonth; d++) {
+    const isToday = d === todayDate;
+    const isPast = d < todayDate;
+
+    cells.push(
+      <div
+        key={d}
+        onClick={isToday && !attended ? onAttendance : undefined}
+        style={{
+          textAlign: 'center', padding: '6px 2px',
+          borderRadius: '6px', fontSize: '0.85rem',
+          cursor: isToday && !attended ? 'pointer' : 'default',
+          background: isToday
+            ? attended ? 'rgba(74,124,63,0.6)' : 'rgba(245,200,66,0.3)'
+            : 'transparent',
+          border: isToday ? '1px solid #4a7c3f' : '1px solid transparent',
+          color: isToday ? '#f5c842' : isPast ? '#555' : '#aaa',
+          fontWeight: isToday ? 'bold' : 'normal',
+          transition: 'all 0.15s',
+        }}
+        onMouseEnter={e => { if (isToday && !attended) e.currentTarget.style.background = 'rgba(245,200,66,0.5)'; }}
+        onMouseLeave={e => { if (isToday && !attended) e.currentTarget.style.background = 'rgba(245,200,66,0.3)'; }}
+      >
+        {isToday && attended ? '✅' : d}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px' }}>
+      {cells}
+    </div>
+  );
+}
 // 홈 탭
 function HomeTab({ profile }) {
   const [editMode, setEditMode] = useState(false);
   const [nickname, setNickname] = useState(profile.nickname);
   const [showModal, setShowModal] = useState(false);  // ← 추가
+  const [bestScore, setBestScore] = useState(0);
+  const [todayScore, setTodayScore] = useState(0);
+  const [attended, setAttended] = useState(false);
+
+  useEffect(() => {
+    const fetchScores = async () => {
+      // 역대 최고점수
+      const { data: best } = await supabase
+        .from('scores')
+        .select('score')
+        .eq('user_id', profile.id)
+        .order('score', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (best) setBestScore(best.score);
+
+      // 오늘 최고점수
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const { data: todayBest } = await supabase
+        .from('scores')
+        .select('score')
+        .eq('user_id', profile.id)
+        .gte('created_at', today.toISOString())
+        .order('score', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (todayBest) setTodayScore(todayBest.score);
+
+      // 오늘 출석했는지 확인
+      const { data: userInfo } = await supabase
+      .from('users')
+      .select('last_attendance')
+      .eq('id', profile.id)
+      .single();
+      
+      const todayStr = new Date().toISOString().split('T')[0];
+      if (userInfo?.last_attendance === todayStr) setAttended(true);
+    };
+    fetchScores();
+  }, [profile.id]);
 
   const handleDownload = () => {
     setShowModal(true);
     setTimeout(() => {
-      window.location.href = 'https://github.com/s38827550-sys/FrogJumpGame/releases/download/v1.0/frogjumpgame.v1.0.zip';
+      window.location.href="https://github.com/s38827550-sys/FrogJumpGame/releases/download/v1.1/FrogJump_v1.1.zip";
     }, 1500);
+  };
+
+  const handleAttendance = async () => {
+    const today = new Date().toISOString().split('T')[0];
+  
+    const { data: userInfo } = await supabase
+      .from('users')
+      .select('last_attendance, points')
+      .eq('id', profile.id)
+      .single();
+
+    if (userInfo?.last_attendance === today) {
+      alert('오늘은 이미 출석했어요! 내일 다시 와주세요 🐸');
+      return;
+    }
+
+    // 포인트 +3 지급
+    const newPoints = (userInfo?.points || 0) + 3;
+    const { error } = await supabase
+      .from('users')
+      .update({
+        points: newPoints,
+        last_attendance: today,
+      })
+      .eq('id', profile.id);
+
+    if (error) { alert('출석체크 실패했어요.'); return; }
+
+    // 포인트 로그 기록
+    await supabase.from('point_logs').insert({
+      user_id: profile.id,
+      points: 3,
+      reason: '출석체크',
+    });
+
+    setAttended(true);
+    alert('출석체크 완료! +3 포인트 획득 🎉');
+    window.location.reload();
   };
 
   const handleSaveNickname = async () => {
@@ -362,7 +500,12 @@ function HomeTab({ profile }) {
             <div>
               <p style={{ color: '#f5c842', fontSize: '1rem', margin: '0 0 4px' }}>{profile.nickname}</p>
               <p style={{ color: '#aaa', fontSize: '0.8rem', margin: '0 0 4px' }}>@{profile.username}</p>
-              <p style={{ color: '#aaa', fontSize: '0.75rem', margin: 0 }}>최고점수: <span style={{ color: '#f5c842' }}>0점</span></p>
+              <p style={{ color: '#aaa', fontSize: '0.75rem', margin: 0 }}>
+                오늘 최고점수: <span style={{ color: '#f5c842' }}>{todayScore}점</span>
+              </p>
+              <p style={{ color: '#aaa', fontSize: '0.75rem', margin: 0 }}>
+                역대 최고점수: <span style={{ color: '#7ae8ff' }}>{bestScore}점</span>
+              </p>
               <p style={{ color: '#aaa', fontSize: '0.75rem', margin: 0 }}>포인트: <span style={{ color: '#7ae8ff' }}>{profile.points || 0}</span></p>
             </div>
           </div>
@@ -406,6 +549,25 @@ function HomeTab({ profile }) {
             fontFamily: "'Jua', sans-serif",
           }}>회원탈퇴</button>
         </div>
+        
+        {/* 출석체크 달력 */}
+        <div style={{
+          background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
+          borderRadius: '16px', padding: '20px', marginTop: '16px',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <h4 style={{ color: '#f5c842', margin: 0, fontSize: '1rem' }}>📅 출석체크</h4>
+            <span style={{ color: '#aaa', fontSize: '0.85rem' }}>
+              {new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long' })}
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', marginBottom: '4px' }}>
+            {['월', '화', '수', '목', '금', '토', '일'].map(d => (
+              <div key={d} style={{ textAlign: 'center', color: '#888', fontSize: '0.75rem', padding: '4px' }}>{d}</div>
+            ))}
+          </div>
+          <CalendarGrid attended={attended} onAttendance={handleAttendance} />
+        </div>
       </div>
 
       {/* 오른쪽: 랭킹 요약 */}
@@ -421,12 +583,16 @@ function RankingTab() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('https://frogjump-leaderboard.onrender.com/leaderboard?limit=50')
-      .then(r => r.json())
-      .then(data => {
-        setRankings(data || []);
-        setLoading(false);
-      });
+    const fetchRankings = async () => {
+      const { data } = await supabase
+        .from('user_best_scores')
+        .select('score, created_at, users(nickname)')
+        .order('score', { ascending: false })
+        .limit(50);
+      setRankings(data || []);
+      setLoading(false);
+    };
+    fetchRankings();
   }, []);
 
   return (
@@ -446,6 +612,7 @@ function RankingTab() {
               <th style={{ color: '#aaa', padding: '8px', textAlign: 'center', width: '60px' }}>순위</th>
               <th style={{ color: '#aaa', padding: '8px', textAlign: 'left' }}>닉네임</th>
               <th style={{ color: '#aaa', padding: '8px', textAlign: 'right' }}>점수</th>
+              <th style={{ color: '#aaa', padding: '8px', textAlign: 'right' }}>날짜</th>
             </tr>
           </thead>
           <tbody>
@@ -457,8 +624,11 @@ function RankingTab() {
                 <td style={{ color: i === 0 ? '#f5c842' : i === 1 ? '#ccc' : i === 2 ? '#cd7f32' : '#888', padding: '10px', textAlign: 'center', fontSize: '1.1rem' }}>
                   {i === 0 ? '🏆' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}
                 </td>
-                <td style={{ color: '#fff', padding: '10px' }}>{r.nickname}</td>
+                <td style={{ color: '#fff', padding: '10px' }}>{r.users?.nickname}</td>
                 <td style={{ color: '#f5c842', padding: '10px', textAlign: 'right' }}>{r.score}점</td>
+                <td style={{ color: '#888', padding: '10px', textAlign: 'right', fontSize: '0.85rem' }}>
+                  {new Date(r.created_at).toLocaleDateString('ko-KR')}
+                </td>
               </tr>
             ))}
           </tbody>
