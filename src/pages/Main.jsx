@@ -13,21 +13,25 @@ function Main() {
   const [hasNewPost, setHasNewPost] = useState(false);
   const navigate = useNavigate();
   const [latestPatch, setLatestPatch] = useState(null);
+  const [latestNotice, setLatestNotice] = useState(null);
+  const [latestEvent, setLatestEvent] = useState(null);
+  const [hasNewNotice, setHasNewNotice] = useState(false);
+  const [hasNewEvent, setHasNewEvent] = useState(false);
 
   useEffect(() => {
+    let cleanup = null;
+  
     const trackOnline = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
       const { data: userData } = await supabase.from('users').select('nickname').eq('id', user.id).single();
     
-      // 접속 시 등록
       await supabase.from('online_users').upsert({
         id: user.id,
         nickname: userData.nickname,
         last_seen: new Date().toISOString(),
       });
 
-      // 30초마다 last_seen 업데이트
       const interval = setInterval(async () => {
         await supabase.from('online_users').upsert({
           id: user.id,
@@ -36,19 +40,22 @@ function Main() {
         });
       }, 30000);
 
-      // 페이지 닫으면 삭제
       const handleUnload = async () => {
         await supabase.from('online_users').delete().eq('id', user.id);
       };
       window.addEventListener('beforeunload', handleUnload);
 
-      return () => {
+      cleanup = () => {
         clearInterval(interval);
         window.removeEventListener('beforeunload', handleUnload);
       };
-      
     };
+  
     trackOnline();
+  
+    return () => {
+      if (cleanup) cleanup();
+    };
   }, []);
 
   useEffect(() => {
@@ -61,7 +68,7 @@ function Main() {
     getUser();
     checkNew();
 
-    // 최신 패치노트 가져오기 ← 여기에 추가
+    // 최신 패치노트 가져오기
     const fetchLatestPatch = async () => {
       const { data: patch } = await supabase
         .from('patch_notes')
@@ -72,6 +79,30 @@ function Main() {
       if (patch) setLatestPatch(patch);
     };
     fetchLatestPatch();
+
+    // 최신 공지사항
+    const fetchLatestNotice = async () => {
+      const { data: notice } = await supabase
+        .from('notices')
+        .select('title')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (notice) setLatestNotice(notice);
+    };
+    fetchLatestNotice();
+
+    // 최신 이벤트
+    const fetchLatestEvent = async () => {
+      const { data: event } = await supabase
+      .from('events')
+      .select('title')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+      if (event) setLatestEvent(event);
+    };
+    fetchLatestEvent();
   }, [navigate]);
 
   const checkNew = async () => {
@@ -90,6 +121,22 @@ function Main() {
       .gte('created_at', tenMinAgo)
       .limit(1);
     if (posts?.length > 0) setHasNewPost(true);
+
+    // 공지사항 NEW 체크
+    const { data: notices } = await supabase
+        .from('notices')
+        .select('id')
+        .gte('created_at', tenMinAgo)
+        .limit(1);
+    if (notices?.length > 0) setHasNewNotice(true);
+
+    // 이벤트 NEW 체크
+    const { data: events } = await supabase
+        .from('events')
+        .select('id')
+        .gte('created_at', tenMinAgo)
+        .limit(1);
+    if (events?.length > 0) setHasNewEvent(true);
   };
 
   const handleLogout = async () => {
@@ -135,33 +182,48 @@ function Main() {
           Frog Jump
         </div>
         {/* 상단바 공지 */}
-        {latestPatch && (
-          <div style={{
-            flex: 1, overflow: 'hidden',
-            margin: '0 24px',
-          }}>
+        {(latestPatch || latestNotice || latestEvent) && (
+          <div style={{ flex: 1, overflow: 'hidden', margin: '0 24px' }}>
             <div style={{ display: 'flex', width: '200%' }}>
-              <div
-                className="marquee"
-                onClick={() => setActiveTab('패치노트')}
-                style={{
-                  color: '#7ae8ff', fontSize: '0.85rem',
-                  cursor: 'pointer', display: 'inline-block',
-                  width: '50%',
-                }}
-              >
-                📢 [{latestPatch.version}] {latestPatch.title}
+              <div className="marquee" style={{
+                color: '#7ae8ff', fontSize: '0.85rem',
+                cursor: 'pointer', display: 'inline-block', width: '50%',
+              }}>
+                {latestPatch && (
+                  <span onClick={() => setActiveTab('패치노트')} style={{ marginRight: '40px' }}>
+                    📋 [{latestPatch.version}] {latestPatch.title}
+                  </span>
+                )}
+                {latestNotice && (
+                  <span onClick={() => setActiveTab('공지사항')} style={{ marginRight: '40px', color: '#f5c842' }}>
+                    📢 {latestNotice.title}
+                  </span>
+                )}
+                {latestEvent && (
+                  <span onClick={() => setActiveTab('이벤트')} style={{ marginRight: '40px', color: '#4cff72' }}>
+                    🎉 {latestEvent.title}
+                  </span>
+                )}
               </div>
-              <div
-                className="marquee"
-                onClick={() => setActiveTab('패치노트')}
-                style={{
-                  color: '#7ae8ff', fontSize: '0.85rem',
-                  cursor: 'pointer', display: 'inline-block',
-                  width: '50%',
-                }}
-              >
-                📢 [{latestPatch.version}] {latestPatch.title}
+              <div className="marquee" style={{
+                color: '#7ae8ff', fontSize: '0.85rem',
+                cursor: 'pointer', display: 'inline-block', width: '50%',
+              }}>
+                {latestPatch && (
+                  <span onClick={() => setActiveTab('패치노트')} style={{ marginRight: '40px' }}>
+                    📋 [{latestPatch.version}] {latestPatch.title}
+                  </span>
+                )}
+                {latestNotice && (
+                  <span onClick={() => setActiveTab('공지사항')} style={{ marginRight: '40px', color: '#f5c842' }}>
+                    📢 {latestNotice.title}
+                  </span>
+                )}
+                {latestEvent && (
+                  <span onClick={() => setActiveTab('이벤트')} style={{ marginRight: '40px', color: '#4cff72' }}>
+                    🎉 {latestEvent.title}
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -213,6 +275,22 @@ function Main() {
                 fontSize: '0.6rem', padding: '1px 4px',
                 borderRadius: '4px', fontFamily: "'Jua', sans-serif",
               }}>NEW</span>
+            )}
+            {tab === '공지사항' && hasNewNotice && (
+            <span style={{
+                position: 'absolute', top: '2px', right: '2px',
+                background: '#ff4444', color: '#fff',
+                fontSize: '0.6rem', padding: '1px 4px',
+                borderRadius: '4px', fontFamily: "'Jua', sans-serif",
+            }}>NEW</span>
+            )}
+            {tab === '이벤트' && hasNewEvent && (
+            <span style={{
+                position: 'absolute', top: '2px', right: '2px',
+                background: '#ff4444', color: '#fff',
+                fontSize: '0.6rem', padding: '1px 4px',
+                borderRadius: '4px', fontFamily: "'Jua', sans-serif",
+            }}>NEW</span>
             )}
           </button>
         ))}
