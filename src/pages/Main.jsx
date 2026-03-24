@@ -464,7 +464,7 @@ function HomeTab({ profile }) {
   const handleDownload = () => {
     setShowModal(true);
     setTimeout(() => {
-      window.open('https://github.com/s38827550-sys/FrogJumpGame/releases/download/v1.2/FrogJump_v1.2.zip', '_blank');
+      window.open('https://github.com/s38827550-sys/FrogJumpGame/releases/download/v1.2.2/FrogJump_v1.2.2.zip', '_blank');
     }, 1500);
   };
 
