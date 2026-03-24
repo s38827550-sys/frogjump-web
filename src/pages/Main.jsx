@@ -4,7 +4,7 @@ import { supabase } from '../supabaseClient';
 import bg from '../assets/background_mygame2.png';
 import frogNormal from '../assets/frog_normal.PNG';
 
-const TABS = ['홈', '랭킹', '패치노트', '게시판', '접속유저'];
+const TABS = ['홈', '랭킹', '패치노트', '게시판', '공지사항', '이벤트', '문의', '접속유저'];
 
 function Main() {
   const [profile, setProfile] = useState(null);
@@ -228,6 +228,9 @@ function Main() {
         {activeTab === '랭킹' && <RankingTab />}
         {activeTab === '패치노트' && <PatchTab profile={profile} />}
         {activeTab === '게시판' && <BoardTab profile={profile} />}
+        {activeTab === '공지사항' && <NoticeTab profile={profile} />}
+        {activeTab === '이벤트' && <EventTab profile={profile} />}
+        {activeTab === '문의' && <InquiryTab profile={profile} />}
         {activeTab === '접속유저' && <OnlineTab />}
       </div>
     </div>
@@ -372,7 +375,9 @@ function HomeTab({ profile }) {
       .eq('id', profile.id)
       .single();
       
-      const todayStr = new Date().toISOString().split('T')[0];
+      const now = new Date();
+      const koreaTime = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+      const todayStr = koreaTime.toISOString().split('T')[0];
       if (userInfo?.last_attendance === todayStr) setAttended(true);
     };
     fetchScores();
@@ -386,7 +391,10 @@ function HomeTab({ profile }) {
   };
 
   const handleAttendance = async () => {
-    const today = new Date().toISOString().split('T')[0];
+    // UTC+9 한국 시간 기준으로 오늘 날짜
+    const now = new Date();
+    const koreaTime = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+    const today = koreaTime.toISOString().split('T')[0];
   
     const { data: userInfo } = await supabase
       .from('users')
@@ -412,11 +420,15 @@ function HomeTab({ profile }) {
     if (error) { alert('출석체크 실패했어요.'); return; }
 
     // 포인트 로그 기록
-    await supabase.from('point_logs').insert({
-      user_id: profile.id,
-      points: 3,
-      reason: '출석체크',
+    const { error: logError } = await supabase.from('point_logs').insert({
+    user_id: profile.id,
+    points: 3,
+    reason: '출석체크',
     });
+
+    if (logError) { 
+    console.log('포인트 로그 에러:', logError);
+    }
 
     setAttended(true);
     alert('출석체크 완료! +3 포인트 획득 🎉');
@@ -1333,6 +1345,903 @@ function BoardTab({ profile }) {
                 </span>
               </div>
               <span style={{ color: '#aaa', fontSize: '0.85rem' }}>{post.users?.nickname}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 공지사항 탭
+function NoticeTab({ profile }) {
+  const [notices, setNotices] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showWrite, setShowWrite] = useState(false);
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const [importance, setImportance] = useState('normal');
+  const [isPinned, setIsPinned] = useState(false);
+  const [selectedNotice, setSelectedNotice] = useState(null);
+  const isAdmin = profile?.role === 'admin';
+  const [likes, setLikes] = useState(0);
+  const [dislikes, setDislikes] = useState(0);
+  const [myReaction, setMyReaction] = useState(null);
+
+  useEffect(() => {
+    fetchNotices();
+  }, []);
+
+  const fetchNotices = async () => {
+    const { data } = await supabase
+      .from('notices')
+      .select('*, users(nickname)')
+      .order('is_pinned', { ascending: false })
+      .order('created_at', { ascending: false });
+    setNotices(data || []);
+    setLoading(false);
+  };
+
+  const handleWrite = async () => {
+    if (!title.trim()) { alert('제목을 입력해주세요!'); return; }
+    if (!content.trim()) { alert('내용을 입력해주세요!'); return; }
+
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await supabase.from('notices').insert({
+      user_id: user.id,
+      title: title.trim(),
+      content: content.trim(),
+      importance,
+      is_pinned: isPinned,
+    });
+
+    if (error) { alert('작성 실패했어요.'); return; }
+    setTitle(''); setContent(''); setImportance('normal'); setIsPinned(false);
+    setShowWrite(false);
+    fetchNotices();
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('정말 삭제할까요?')) return;
+    await supabase.from('notices').delete().eq('id', id);
+    setSelectedNotice(null);
+    fetchNotices();
+  };
+  
+  const fetchReactions = async (noticeId) => {
+    const { data } = await supabase
+      .from('notice_reactions')
+      .select('*')
+      .eq('notice_id', noticeId);
+  
+    if (data) {
+      setLikes(data.filter(r => r.reaction === 'like').length);
+      setDislikes(data.filter(r => r.reaction === 'dislike').length);
+      const { data: { session } } = await supabase.auth.getSession();
+      const mine = data.find(r => r.user_id === session?.user?.id);
+      setMyReaction(mine?.reaction || null);
+    }
+  };
+
+  const handleReaction = async (type) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+
+    if (myReaction === type) {
+      await supabase.from('notice_reactions')
+        .delete()
+        .eq('notice_id', selectedNotice.id)
+        .eq('user_id', session.user.id);
+    } else {
+      await supabase.from('notice_reactions').upsert({
+        notice_id: selectedNotice.id,
+        user_id: session.user.id,
+        reaction: type,
+      });
+    }
+    fetchReactions(selectedNotice.id);
+  };
+
+  const importanceColor = (imp) => {
+    if (imp === 'urgent') return '#ff4444';
+    if (imp === 'important') return '#f5c842';
+    return '#aaa';
+  };
+
+  const importanceLabel = (imp) => {
+    if (imp === 'urgent') return '🚨 긴급';
+    if (imp === 'important') return '⚠️ 중요';
+    return '📢 일반';
+  };
+  
+  useEffect(() => {
+    if (selectedNotice) fetchReactions(selectedNotice.id);
+  }, [selectedNotice]);
+
+  if (selectedNotice) {
+    return (
+      <div style={{
+        background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
+        borderRadius: '16px', padding: '24px',
+      }}>
+        <button onClick={() => setSelectedNotice(null)} style={{
+          padding: '6px 16px', borderRadius: '8px',
+          border: '1px solid #4a7c3f', background: 'transparent',
+          color: '#aaa', cursor: 'pointer', fontSize: '0.9rem',
+          fontFamily: "'Jua', sans-serif", marginBottom: '16px',
+        }}>← 목록으로</button>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+          <span style={{ color: importanceColor(selectedNotice.importance), fontSize: '0.9rem' }}>
+            {importanceLabel(selectedNotice.importance)}
+          </span>
+          {selectedNotice.is_pinned && <span style={{ color: '#f5c842', fontSize: '0.9rem' }}>📌 고정</span>}
+          <h2 style={{ color: '#f5c842', margin: 0 }}>{selectedNotice.title}</h2>
+        </div>
+        <p style={{ color: '#888', fontSize: '0.85rem', margin: '0 0 24px' }}>
+          {new Date(selectedNotice.created_at).toLocaleDateString('ko-KR')}
+        </p>
+        <div style={{
+          color: '#ddd', fontSize: '1rem', lineHeight: '1.8',
+          borderTop: '1px solid #4a7c3f', paddingTop: '16px',
+          whiteSpace: 'pre-wrap',
+        }}>
+          {selectedNotice.content}
+        </div>
+
+        {isAdmin && (
+          <button onClick={() => handleDelete(selectedNotice.id)} style={{
+            marginTop: '24px', padding: '8px 20px', borderRadius: '8px',
+            border: '1px solid #ff4444', background: 'transparent',
+            color: '#ff4444', cursor: 'pointer', fontSize: '0.9rem',
+            fontFamily: "'Jua', sans-serif",
+          }}>삭제</button>
+        )}
+
+        {/* 좋아요/싫어요 */}
+        <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+        <button onClick={() => handleReaction('like')} style={{
+            padding: '8px 20px', borderRadius: '8px',
+            border: `1px solid ${myReaction === 'like' ? '#4cff72' : '#4a7c3f'}`,
+            background: myReaction === 'like' ? 'rgba(76,255,114,0.2)' : 'transparent',
+            color: myReaction === 'like' ? '#4cff72' : '#aaa',
+            cursor: 'pointer', fontSize: '0.9rem',
+            fontFamily: "'Jua', sans-serif",
+        }}>👍 {likes}</button>
+        <button onClick={() => handleReaction('dislike')} style={{
+            padding: '8px 20px', borderRadius: '8px',
+            border: `1px solid ${myReaction === 'dislike' ? '#ff4444' : '#4a7c3f'}`,
+            background: myReaction === 'dislike' ? 'rgba(255,68,68,0.2)' : 'transparent',
+            color: myReaction === 'dislike' ? '#ff4444' : '#aaa',
+            cursor: 'pointer', fontSize: '0.9rem',
+            fontFamily: "'Jua', sans-serif",
+        }}>👎 {dislikes}</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
+      borderRadius: '16px', padding: '24px',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+        <h3 style={{ color: '#f5c842', margin: 0, fontSize: '1.2rem' }}>📢 공지사항</h3>
+        {isAdmin && (
+          <button onClick={() => setShowWrite(!showWrite)} style={{
+            padding: '8px 16px', borderRadius: '8px',
+            border: '1px solid #4a7c3f', background: showWrite ? 'rgba(74,124,63,0.4)' : 'rgba(74,124,63,0.2)',
+            color: '#fff', cursor: 'pointer', fontSize: '0.9rem',
+            fontFamily: "'Jua', sans-serif",
+          }}>
+            {showWrite ? '▲ 닫기' : '✏️ 작성'}
+          </button>
+        )}
+      </div>
+
+      {isAdmin && showWrite && (
+        <div style={{
+          background: 'rgba(74,124,63,0.1)', border: '1px solid #4a7c3f',
+          borderRadius: '12px', padding: '16px', marginBottom: '16px',
+        }}>
+          <input
+            placeholder="제목"
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+            style={{
+              width: '100%', padding: '10px', borderRadius: '8px',
+              border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
+              color: '#fff', fontSize: '1rem', outline: 'none',
+              fontFamily: "'Jua', sans-serif", marginBottom: '8px',
+              boxSizing: 'border-box',
+            }}
+          />
+          <textarea
+            placeholder="내용을 입력해주세요..."
+            value={content}
+            onChange={e => setContent(e.target.value)}
+            rows={6}
+            style={{
+              width: '100%', padding: '10px', borderRadius: '8px',
+              border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
+              color: '#fff', fontSize: '0.95rem', outline: 'none',
+              fontFamily: "'Jua', sans-serif", resize: 'vertical',
+              boxSizing: 'border-box', marginBottom: '8px',
+            }}
+          />
+          <div style={{ display: 'flex', gap: '12px', marginBottom: '8px', alignItems: 'center' }}>
+            <select
+              value={importance}
+              onChange={e => setImportance(e.target.value)}
+              style={{
+                padding: '8px', borderRadius: '8px',
+                border: '1px solid #4a7c3f', background: 'rgba(0,0,0,0.5)',
+                color: '#fff', fontSize: '0.9rem', outline: 'none',
+                fontFamily: "'Jua', sans-serif",
+              }}
+            >
+              <option value="normal">📢 일반</option>
+              <option value="important">⚠️ 중요</option>
+              <option value="urgent">🚨 긴급</option>
+            </select>
+            <label style={{ color: '#aaa', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={isPinned}
+                onChange={e => setIsPinned(e.target.checked)}
+              />
+              📌 상단 고정
+            </label>
+          </div>
+          <button onClick={handleWrite} style={{
+            padding: '10px 24px', borderRadius: '8px',
+            border: 'none', background: '#4a7c3f',
+            color: '#fff', cursor: 'pointer', fontSize: '1rem',
+            fontFamily: "'Jua', sans-serif",
+          }}>등록</button>
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ color: '#888', textAlign: 'center', padding: '40px' }}>로딩중...</div>
+      ) : notices.length === 0 ? (
+        <div style={{ color: '#888', textAlign: 'center', padding: '40px' }}>공지사항이 없습니다.</div>
+      ) : (
+        <div>
+          {notices.map((notice, i) => (
+            <div
+              key={notice.id}
+              onClick={() => setSelectedNotice(notice)}
+              style={{
+                padding: '14px 16px',
+                borderBottom: i < notices.length - 1 ? '1px solid rgba(74,124,63,0.3)' : 'none',
+                cursor: 'pointer', borderRadius: '8px', transition: 'background 0.15s',
+                background: notice.is_pinned ? 'rgba(245,200,66,0.05)' : 'transparent',
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'rgba(74,124,63,0.1)'}
+              onMouseLeave={e => e.currentTarget.style.background = notice.is_pinned ? 'rgba(245,200,66,0.05)' : 'transparent'}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {notice.is_pinned && <span style={{ fontSize: '0.8rem' }}>📌</span>}
+                  <span style={{ color: importanceColor(notice.importance), fontSize: '0.8rem' }}>
+                    {importanceLabel(notice.importance)}
+                  </span>
+                  <span style={{ color: '#fff', fontSize: '1rem' }}>{notice.title}</span>
+                </div>
+                <span style={{ color: '#888', fontSize: '0.8rem' }}>
+                  {new Date(notice.created_at).toLocaleDateString('ko-KR')}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 이벤트 탭 (임시)
+function EventTab({ profile }) {
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showWrite, setShowWrite] = useState(false);
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [selectedEvent, setSelectedEvent] = useState(null);
+  const isAdmin = profile?.role === 'admin';
+
+  useEffect(() => {
+    fetchEvents();
+  }, []);
+
+  const fetchEvents = async () => {
+    const { data } = await supabase
+      .from('events')
+      .select('*, users(nickname)')
+      .order('created_at', { ascending: false });
+    setEvents(data || []);
+    setLoading(false);
+  };
+
+  const handleWrite = async () => {
+    if (!title.trim()) { alert('제목을 입력해주세요!'); return; }
+    if (!content.trim()) { alert('내용을 입력해주세요!'); return; }
+    if (!startDate) { alert('시작일을 입력해주세요!'); return; }
+    if (!endDate) { alert('종료일을 입력해주세요!'); return; }
+
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await supabase.from('events').insert({
+      user_id: user.id,
+      title: title.trim(),
+      content: content.trim(),
+      start_date: new Date(startDate).toISOString(),
+      end_date: new Date(endDate).toISOString(),
+    });
+
+    if (error) { alert('작성 실패했어요.'); return; }
+    setTitle(''); setContent(''); setStartDate(''); setEndDate('');
+    setShowWrite(false);
+    fetchEvents();
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('정말 삭제할까요?')) return;
+    await supabase.from('events').delete().eq('id', id);
+    setSelectedEvent(null);
+    fetchEvents();
+  };
+
+  const getStatus = (event) => {
+    const now = new Date();
+    const start = new Date(event.start_date);
+    const end = new Date(event.end_date);
+    if (now < start) return { label: '예정', color: '#7ae8ff' };
+    if (now > end) return { label: '종료', color: '#888' };
+    return { label: '진행중', color: '#4cff72' };
+  };
+
+  if (selectedEvent) {
+    const status = getStatus(selectedEvent);
+    return (
+      <div style={{
+        background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
+        borderRadius: '16px', padding: '24px',
+      }}>
+        <button onClick={() => setSelectedEvent(null)} style={{
+          padding: '6px 16px', borderRadius: '8px',
+          border: '1px solid #4a7c3f', background: 'transparent',
+          color: '#aaa', cursor: 'pointer', fontSize: '0.9rem',
+          fontFamily: "'Jua', sans-serif", marginBottom: '16px',
+        }}>← 목록으로</button>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+          <span style={{
+            background: `${status.color}22`, border: `1px solid ${status.color}`,
+            borderRadius: '6px', padding: '2px 10px', color: status.color, fontSize: '0.85rem',
+          }}>{status.label}</span>
+          <h2 style={{ color: '#f5c842', margin: 0 }}>{selectedEvent.title}</h2>
+        </div>
+        <p style={{ color: '#888', fontSize: '0.85rem', margin: '0 0 8px' }}>
+          📅 {new Date(selectedEvent.start_date).toLocaleDateString('ko-KR')} ~ {new Date(selectedEvent.end_date).toLocaleDateString('ko-KR')}
+        </p>
+        <div style={{
+          color: '#ddd', fontSize: '1rem', lineHeight: '1.8',
+          borderTop: '1px solid #4a7c3f', paddingTop: '16px',
+          whiteSpace: 'pre-wrap',
+        }}>
+          {selectedEvent.content}
+        </div>
+
+        {isAdmin && (
+          <button onClick={() => handleDelete(selectedEvent.id)} style={{
+            marginTop: '24px', padding: '8px 20px', borderRadius: '8px',
+            border: '1px solid #ff4444', background: 'transparent',
+            color: '#ff4444', cursor: 'pointer', fontSize: '0.9rem',
+            fontFamily: "'Jua', sans-serif",
+          }}>삭제</button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
+      borderRadius: '16px', padding: '24px',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+        <h3 style={{ color: '#f5c842', margin: 0, fontSize: '1.2rem' }}>🎉 이벤트</h3>
+        {isAdmin && (
+          <button onClick={() => setShowWrite(!showWrite)} style={{
+            padding: '8px 16px', borderRadius: '8px',
+            border: '1px solid #4a7c3f', background: showWrite ? 'rgba(74,124,63,0.4)' : 'rgba(74,124,63,0.2)',
+            color: '#fff', cursor: 'pointer', fontSize: '0.9rem',
+            fontFamily: "'Jua', sans-serif",
+          }}>
+            {showWrite ? '▲ 닫기' : '✏️ 작성'}
+          </button>
+        )}
+      </div>
+
+      {isAdmin && showWrite && (
+        <div style={{
+          background: 'rgba(74,124,63,0.1)', border: '1px solid #4a7c3f',
+          borderRadius: '12px', padding: '16px', marginBottom: '16px',
+        }}>
+          <input
+            placeholder="제목"
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+            style={{
+              width: '100%', padding: '10px', borderRadius: '8px',
+              border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
+              color: '#fff', fontSize: '1rem', outline: 'none',
+              fontFamily: "'Jua', sans-serif", marginBottom: '8px',
+              boxSizing: 'border-box',
+            }}
+          />
+          <textarea
+            placeholder="내용을 입력해주세요..."
+            value={content}
+            onChange={e => setContent(e.target.value)}
+            rows={6}
+            style={{
+              width: '100%', padding: '10px', borderRadius: '8px',
+              border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
+              color: '#fff', fontSize: '0.95rem', outline: 'none',
+              fontFamily: "'Jua', sans-serif", resize: 'vertical',
+              boxSizing: 'border-box', marginBottom: '8px',
+            }}
+          />
+          <div style={{ display: 'flex', gap: '12px', marginBottom: '8px' }}>
+            <div style={{ flex: 1 }}>
+              <p style={{ color: '#aaa', fontSize: '0.85rem', margin: '0 0 4px' }}>시작일</p>
+              <input
+                type="datetime-local"
+                value={startDate}
+                onChange={e => setStartDate(e.target.value)}
+                style={{
+                    width: '100%', padding: '8px', borderRadius: '8px',
+                    border: '1px solid #4a7c3f', background: 'rgba(0,0,0,0.5)',
+                    color: '#fff', fontSize: '0.9rem', outline: 'none',
+                    fontFamily: "'Jua', sans-serif", boxSizing: 'border-box',
+                    colorScheme: 'dark', 
+                }}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <p style={{ color: '#aaa', fontSize: '0.85rem', margin: '0 0 4px' }}>종료일</p>
+              <input
+                type="datetime-local"
+                value={endDate}
+                onChange={e => setEndDate(e.target.value)}
+                style={{
+                    width: '100%', padding: '8px', borderRadius: '8px',
+                    border: '1px solid #4a7c3f', background: 'rgba(0,0,0,0.5)',
+                    color: '#fff', fontSize: '0.9rem', outline: 'none',
+                    fontFamily: "'Jua', sans-serif", boxSizing: 'border-box',
+                    colorScheme: 'dark',  // ← 이거 추가!
+                }}
+              />
+            </div>
+          </div>
+          <button onClick={handleWrite} style={{
+            padding: '10px 24px', borderRadius: '8px',
+            border: 'none', background: '#4a7c3f',
+            color: '#fff', cursor: 'pointer', fontSize: '1rem',
+            fontFamily: "'Jua', sans-serif",
+          }}>등록</button>
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ color: '#888', textAlign: 'center', padding: '40px' }}>로딩중...</div>
+      ) : events.length === 0 ? (
+        <div style={{ color: '#888', textAlign: 'center', padding: '40px' }}>이벤트가 없습니다.</div>
+      ) : (
+        <div>
+          {events.map((event, i) => {
+            const status = getStatus(event);
+            return (
+              <div
+                key={event.id}
+                onClick={() => setSelectedEvent(event)}
+                style={{
+                  padding: '14px 16px',
+                  borderBottom: i < events.length - 1 ? '1px solid rgba(74,124,63,0.3)' : 'none',
+                  cursor: 'pointer', borderRadius: '8px', transition: 'background 0.15s',
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = 'rgba(74,124,63,0.1)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{
+                      background: `${status.color}22`, border: `1px solid ${status.color}`,
+                      borderRadius: '6px', padding: '2px 8px', color: status.color, fontSize: '0.8rem',
+                    }}>{status.label}</span>
+                    <span style={{ color: '#fff', fontSize: '1rem' }}>{event.title}</span>
+                  </div>
+                  <span style={{ color: '#888', fontSize: '0.8rem' }}>
+                    {new Date(event.end_date).toLocaleDateString('ko-KR')} 까지
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 1:1 문의 탭 (임시)
+function InquiryTab({ profile }) {
+  const [inquiries, setInquiries] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showWrite, setShowWrite] = useState(false);
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const [password, setPassword] = useState('');
+  const [isSecret, setIsSecret] = useState(false);
+  const [selectedInquiry, setSelectedInquiry] = useState(null);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [answer, setAnswer] = useState('');
+  const [showAnswer, setShowAnswer] = useState(false);
+  const isAdmin = profile?.role === 'admin';
+
+  useEffect(() => {
+    fetchInquiries();
+  }, []);
+
+  const fetchInquiries = async () => {
+    const { data } = await supabase
+      .from('inquiries')
+      .select('*, users(nickname)')
+      .order('created_at', { ascending: false });
+    setInquiries(data || []);
+    setLoading(false);
+  };
+
+  const handleWrite = async () => {
+    if (!title.trim()) { alert('제목을 입력해주세요!'); return; }
+    if (!content.trim()) { alert('내용을 입력해주세요!'); return; }
+    if (isSecret && !password.trim()) { alert('비밀번호를 입력해주세요!'); return; }
+
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await supabase.from('inquiries').insert({
+      user_id: user.id,
+      title: title.trim(),
+      content: content.trim(),
+      password: isSecret ? password.trim() : null,
+      is_secret: isSecret,
+    });
+
+    if (error) { alert('작성 실패했어요.'); return; }
+    setTitle(''); setContent(''); setPassword(''); setIsSecret(false);
+    setShowWrite(false);
+    fetchInquiries();
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('정말 삭제할까요?')) return;
+    await supabase.from('inquiries').delete().eq('id', id);
+    setSelectedInquiry(null);
+    fetchInquiries();
+  };
+
+  const handleClickInquiry = (inquiry) => {
+    // 본인 글이거나 관리자면 바로 열기
+    if (inquiry.user_id === profile.id || isAdmin) {
+      setSelectedInquiry(inquiry);
+      return;
+    }
+    // 비밀글이면 비밀번호 입력
+    if (inquiry.is_secret) {
+      setSelectedInquiry(inquiry);
+      setShowPasswordModal(true);
+      return;
+    }
+    setSelectedInquiry(inquiry);
+  };
+
+  const handlePasswordCheck = () => {
+    if (passwordInput === selectedInquiry.password) {
+      setShowPasswordModal(false);
+      setPasswordInput('');
+    } else {
+      alert('비밀번호가 틀렸어요!');
+    }
+  };
+
+  const handleAnswer = async () => {
+    if (!answer.trim()) { alert('답변을 입력해주세요!'); return; }
+    const { error } = await supabase
+      .from('inquiries')
+      .update({
+        answer: answer.trim(),
+        status: '답변완료',
+        answered_at: new Date().toISOString(),
+      })
+      .eq('id', selectedInquiry.id);
+
+    if (error) { alert('답변 실패했어요.'); return; }
+    alert('답변이 등록됐어요! 👍');
+    setAnswer('');
+    setShowAnswer(false);
+    fetchInquiries();
+    setSelectedInquiry({
+         ...selectedInquiry, 
+         answer: answer, 
+         status: '답변완료',
+         answered_at: new Date().toISOString(),
+       });
+  };
+
+  // 비밀번호 모달
+  if (showPasswordModal) {
+    return (
+      <div style={{
+        background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
+        borderRadius: '16px', padding: '24px', maxWidth: '400px', margin: '0 auto',
+      }}>
+        <h3 style={{ color: '#f5c842', margin: '0 0 16px' }}>🔒 비밀글입니다</h3>
+        <p style={{ color: '#aaa', fontSize: '0.9rem', marginBottom: '16px' }}>비밀번호를 입력해주세요</p>
+        <input
+          type="password"
+          placeholder="비밀번호"
+          value={passwordInput}
+          onChange={e => setPasswordInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handlePasswordCheck()}
+          style={{
+            width: '100%', padding: '10px', borderRadius: '8px',
+            border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
+            color: '#fff', fontSize: '1rem', outline: 'none',
+            fontFamily: "'Jua', sans-serif", marginBottom: '12px',
+            boxSizing: 'border-box',
+          }}
+        />
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button onClick={handlePasswordCheck} style={{
+            flex: 1, padding: '10px', borderRadius: '8px',
+            border: 'none', background: '#4a7c3f',
+            color: '#fff', cursor: 'pointer', fontSize: '1rem',
+            fontFamily: "'Jua', sans-serif",
+          }}>확인</button>
+          <button onClick={() => { setShowPasswordModal(false); setSelectedInquiry(null); setPasswordInput(''); }} style={{
+            flex: 1, padding: '10px', borderRadius: '8px',
+            border: '1px solid #4a7c3f', background: 'transparent',
+            color: '#aaa', cursor: 'pointer', fontSize: '1rem',
+            fontFamily: "'Jua', sans-serif",
+          }}>취소</button>
+        </div>
+      </div>
+    );
+  }
+
+  // 상세보기
+  if (selectedInquiry) {
+    return (
+      <div style={{
+        background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
+        borderRadius: '16px', padding: '24px',
+      }}>
+        <button onClick={() => { setSelectedInquiry(null); setShowAnswer(false); }} style={{
+          padding: '6px 16px', borderRadius: '8px',
+          border: '1px solid #4a7c3f', background: 'transparent',
+          color: '#aaa', cursor: 'pointer', fontSize: '0.9rem',
+          fontFamily: "'Jua', sans-serif", marginBottom: '16px',
+        }}>← 목록으로</button>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+          <span style={{
+            background: selectedInquiry.status === '답변완료' ? 'rgba(76,255,114,0.2)' : 'rgba(245,200,66,0.2)',
+            border: `1px solid ${selectedInquiry.status === '답변완료' ? '#4cff72' : '#f5c842'}`,
+            borderRadius: '6px', padding: '2px 10px',
+            color: selectedInquiry.status === '답변완료' ? '#4cff72' : '#f5c842',
+            fontSize: '0.85rem',
+          }}>{selectedInquiry.status}</span>
+          {selectedInquiry.is_secret && <span style={{ color: '#aaa', fontSize: '0.85rem' }}>🔒 비밀글</span>}
+          <h2 style={{ color: '#f5c842', margin: 0 }}>{selectedInquiry.title}</h2>
+        </div>
+        <p style={{ color: '#888', fontSize: '0.85rem', margin: '0 0 24px' }}>
+          {isAdmin ? selectedInquiry.users?.nickname : ''} · {new Date(selectedInquiry.created_at).toLocaleDateString('ko-KR')}
+        </p>
+        <div style={{
+          color: '#ddd', fontSize: '1rem', lineHeight: '1.8',
+          borderTop: '1px solid #4a7c3f', paddingTop: '16px',
+          whiteSpace: 'pre-wrap', marginBottom: '24px',
+        }}>
+          {selectedInquiry.content}
+        </div>
+
+        {/* 답변 */}
+        {selectedInquiry.answer && (
+          <div style={{
+            background: 'rgba(74,124,63,0.1)', border: '1px solid #4a7c3f',
+            borderRadius: '12px', padding: '16px', marginBottom: '16px',
+          }}>
+            <p style={{ color: '#4cff72', fontSize: '0.9rem', margin: '0 0 8px' }}>
+              💬 관리자 답변 · {new Date(selectedInquiry.answered_at).toLocaleDateString('ko-KR')}
+            </p>
+            <p style={{ color: '#ddd', fontSize: '1rem', margin: 0, whiteSpace: 'pre-wrap' }}>
+              {selectedInquiry.answer}
+            </p>
+          </div>
+        )}
+
+        {/* 관리자 답변 입력 */}
+        {isAdmin && !selectedInquiry.answer && (
+          <div>
+            <button onClick={() => setShowAnswer(!showAnswer)} style={{
+              padding: '8px 20px', borderRadius: '8px',
+              border: '1px solid #4a7c3f', background: 'transparent',
+              color: '#4a7c3f', cursor: 'pointer', fontSize: '0.9rem',
+              fontFamily: "'Jua', sans-serif", marginBottom: '8px',
+            }}>
+              {showAnswer ? '▲ 닫기' : '💬 답변하기'}
+            </button>
+            {showAnswer && (
+              <div>
+                <textarea
+                  placeholder="답변을 입력해주세요..."
+                  value={answer}
+                  onChange={e => setAnswer(e.target.value)}
+                  rows={4}
+                  style={{
+                    width: '100%', padding: '10px', borderRadius: '8px',
+                    border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
+                    color: '#fff', fontSize: '0.95rem', outline: 'none',
+                    fontFamily: "'Jua', sans-serif", resize: 'vertical',
+                    boxSizing: 'border-box', marginBottom: '8px',
+                  }}
+                />
+                <button onClick={handleAnswer} style={{
+                  padding: '10px 24px', borderRadius: '8px',
+                  border: 'none', background: '#4a7c3f',
+                  color: '#fff', cursor: 'pointer', fontSize: '1rem',
+                  fontFamily: "'Jua', sans-serif",
+                }}>답변 등록</button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {(selectedInquiry.user_id === profile.id || isAdmin) && (
+          <button onClick={() => handleDelete(selectedInquiry.id)} style={{
+            marginTop: '16px', padding: '8px 20px', borderRadius: '8px',
+            border: '1px solid #ff4444', background: 'transparent',
+            color: '#ff4444', cursor: 'pointer', fontSize: '0.9rem',
+            fontFamily: "'Jua', sans-serif",
+          }}>삭제</button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
+      borderRadius: '16px', padding: '24px',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+        <h3 style={{ color: '#f5c842', margin: 0, fontSize: '1.2rem' }}>📩 1:1 문의</h3>
+        <button onClick={() => setShowWrite(!showWrite)} style={{
+          padding: '8px 16px', borderRadius: '8px',
+          border: '1px solid #4a7c3f', background: showWrite ? 'rgba(74,124,63,0.4)' : 'rgba(74,124,63,0.2)',
+          color: '#fff', cursor: 'pointer', fontSize: '0.9rem',
+          fontFamily: "'Jua', sans-serif",
+        }}>
+          {showWrite ? '▲ 닫기' : '✏️ 문의하기'}
+        </button>
+      </div>
+
+      {showWrite && (
+        <div style={{
+          background: 'rgba(74,124,63,0.1)', border: '1px solid #4a7c3f',
+          borderRadius: '12px', padding: '16px', marginBottom: '16px',
+        }}>
+          <input
+            placeholder="제목"
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+            style={{
+              width: '100%', padding: '10px', borderRadius: '8px',
+              border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
+              color: '#fff', fontSize: '1rem', outline: 'none',
+              fontFamily: "'Jua', sans-serif", marginBottom: '8px',
+              boxSizing: 'border-box',
+            }}
+          />
+          <textarea
+            placeholder="문의 내용을 입력해주세요..."
+            value={content}
+            onChange={e => setContent(e.target.value)}
+            rows={5}
+            style={{
+              width: '100%', padding: '10px', borderRadius: '8px',
+              border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
+              color: '#fff', fontSize: '0.95rem', outline: 'none',
+              fontFamily: "'Jua', sans-serif", resize: 'vertical',
+              boxSizing: 'border-box', marginBottom: '8px',
+            }}
+          />
+          <label style={{ color: '#aaa', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', marginBottom: '8px' }}>
+            <input
+              type="checkbox"
+              checked={isSecret}
+              onChange={e => setIsSecret(e.target.checked)}
+            />
+            🔒 비밀글
+          </label>
+          {isSecret && (
+            <input
+              type="password"
+              placeholder="비밀번호 설정"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              style={{
+                width: '100%', padding: '10px', borderRadius: '8px',
+                border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
+                color: '#fff', fontSize: '1rem', outline: 'none',
+                fontFamily: "'Jua', sans-serif", marginBottom: '8px',
+                boxSizing: 'border-box',
+              }}
+            />
+          )}
+          <button onClick={handleWrite} style={{
+            padding: '10px 24px', borderRadius: '8px',
+            border: 'none', background: '#4a7c3f',
+            color: '#fff', cursor: 'pointer', fontSize: '1rem',
+            fontFamily: "'Jua', sans-serif",
+          }}>등록</button>
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ color: '#888', textAlign: 'center', padding: '40px' }}>로딩중...</div>
+      ) : inquiries.length === 0 ? (
+        <div style={{ color: '#888', textAlign: 'center', padding: '40px' }}>문의 내역이 없습니다.</div>
+      ) : (
+        <div>
+          {inquiries.map((inquiry, i) => (
+            <div
+              key={inquiry.id}
+              onClick={() => handleClickInquiry(inquiry)}
+              style={{
+                padding: '14px 16px',
+                borderBottom: i < inquiries.length - 1 ? '1px solid rgba(74,124,63,0.3)' : 'none',
+                cursor: 'pointer', borderRadius: '8px', transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'rgba(74,124,63,0.1)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {inquiry.is_secret && <span style={{ fontSize: '0.85rem' }}>🔒</span>}
+                  <span style={{
+                    background: inquiry.status === '답변완료' ? 'rgba(76,255,114,0.2)' : 'rgba(245,200,66,0.2)',
+                    border: `1px solid ${inquiry.status === '답변완료' ? '#4cff72' : '#f5c842'}`,
+                    borderRadius: '6px', padding: '2px 8px',
+                    color: inquiry.status === '답변완료' ? '#4cff72' : '#f5c842',
+                    fontSize: '0.8rem',
+                  }}>{inquiry.status}</span>
+                  <span style={{ color: '#fff', fontSize: '1rem' }}>
+                    {inquiry.is_secret && inquiry.user_id !== profile.id && !isAdmin ? '🔒 비밀글입니다' : inquiry.title}
+                  </span>
+                </div>
+                <span style={{ color: '#888', fontSize: '0.8rem' }}>
+                  {new Date(inquiry.created_at).toLocaleDateString('ko-KR')}
+                </span>
+              </div>
+              {isAdmin && (
+                <span style={{ color: '#aaa', fontSize: '0.85rem' }}>{inquiry.users?.nickname}</span>
+              )}
             </div>
           ))}
         </div>
