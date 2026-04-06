@@ -181,7 +181,7 @@ function HomeTab({ profile, setProfile, token }) {
   };
 
   const handleDownload = () => {
-    window.open('https://github.com/s38827550-sys/FrogJumpGame/releases/download/v1.2.2/FrogJump_v1.2.2.zip', '_blank');
+    window.open('https://github.com/s38827550-sys/FrogJumpGame/releases/download/v1.2.3/FrogJump_v1.2.3.zip', '_blank');
   };
 
   return (
