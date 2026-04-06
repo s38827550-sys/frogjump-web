@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../supabaseClient';
+import { api, getToken, getUsername, getNickname, clearToken } from '../apiClient';
 import bg from '../assets/background_mygame2.png';
 import frogNormal from '../assets/frog_normal.PNG';
 
@@ -9,140 +9,32 @@ const TABS = ['홈', '랭킹', '패치노트', '게시판', '공지사항', '이
 function Main() {
   const [profile, setProfile] = useState(null);
   const [activeTab, setActiveTab] = useState('홈');
-  const [hasNewPatch, setHasNewPatch] = useState(false);
-  const [hasNewPost, setHasNewPost] = useState(false);
   const navigate = useNavigate();
-  const [latestPatch, setLatestPatch] = useState(null);
-  const [latestNotice, setLatestNotice] = useState(null);
-  const [latestEvent, setLatestEvent] = useState(null);
-  const [hasNewNotice, setHasNewNotice] = useState(false);
-  const [hasNewEvent, setHasNewEvent] = useState(false);
+  const token = getToken();
 
   useEffect(() => {
-    let cleanup = null;
-  
-    const trackOnline = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data: userData } = await supabase.from('users').select('nickname').eq('id', user.id).single();
-    
-      await supabase.from('online_users').upsert({
-        id: user.id,
-        nickname: userData.nickname,
-        last_seen: new Date().toISOString(),
-      });
+    if (!token) { navigate('/login'); return; }
 
-      const interval = setInterval(async () => {
-        await supabase.from('online_users').upsert({
-          id: user.id,
-          nickname: userData.nickname,
-          last_seen: new Date().toISOString(),
-        });
-      }, 30000);
-
-      const handleUnload = async () => {
-        await supabase.from('online_users').delete().eq('id', user.id);
-      };
-      window.addEventListener('beforeunload', handleUnload);
-
-      cleanup = () => {
-        clearInterval(interval);
-        window.removeEventListener('beforeunload', handleUnload);
-      };
-    };
-  
-    trackOnline();
-  
-    return () => {
-      if (cleanup) cleanup();
-    };
-  }, []);
-
-  useEffect(() => {
-    const getUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { navigate('/login'); return; }
-      const { data } = await supabase.from('users').select('*').eq('id', user.id).single();
+    const fetchProfile = async () => {
+      const res = await api('GET', '/users/me', null, token);
+      if (!res) return;
+      const data = await res.json();
       setProfile(data);
     };
-    getUser();
-    checkNew();
+    fetchProfile();
 
-    // 최신 패치노트 가져오기
-    const fetchLatestPatch = async () => {
-      const { data: patch } = await supabase
-        .from('patch_notes')
-        .select('title, version')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (patch) setLatestPatch(patch);
-    };
-    fetchLatestPatch();
+    // 접속유저 heartbeat (30초마다)
+    const heartbeat = setInterval(() => {
+      api('POST', '/users/online', null, token);
+    }, 30000);
+    api('POST', '/users/online', null, token);
 
-    // 최신 공지사항
-    const fetchLatestNotice = async () => {
-      const { data: notice } = await supabase
-        .from('notices')
-        .select('title')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (notice) setLatestNotice(notice);
-    };
-    fetchLatestNotice();
-
-    // 최신 이벤트
-    const fetchLatestEvent = async () => {
-      const { data: event } = await supabase
-      .from('events')
-      .select('title')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-      if (event) setLatestEvent(event);
-    };
-    fetchLatestEvent();
-  }, [navigate]);
-
-  const checkNew = async () => {
-    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-
-    const { data: patches } = await supabase
-      .from('patch_notes')
-      .select('id')
-      .gte('created_at', tenMinAgo)
-      .limit(1);
-    if (patches?.length > 0) setHasNewPatch(true);
-
-    const { data: posts } = await supabase
-      .from('posts')
-      .select('id')
-      .gte('created_at', tenMinAgo)
-      .limit(1);
-    if (posts?.length > 0) setHasNewPost(true);
-
-    // 공지사항 NEW 체크
-    const { data: notices } = await supabase
-        .from('notices')
-        .select('id')
-        .gte('created_at', tenMinAgo)
-        .limit(1);
-    if (notices?.length > 0) setHasNewNotice(true);
-
-    // 이벤트 NEW 체크
-    const { data: events } = await supabase
-        .from('events')
-        .select('id')
-        .gte('created_at', tenMinAgo)
-        .limit(1);
-    if (events?.length > 0) setHasNewEvent(true);
-  };
+    return () => clearInterval(heartbeat);
+  }, [token, navigate]);
 
   const handleLogout = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) await supabase.from('online_users').delete().eq('id', user.id);
-    await supabase.auth.signOut();
+    await api('DELETE', '/users/online', null, token);
+    clearToken();
     navigate('/login');
   };
 
@@ -161,8 +53,7 @@ function Main() {
       width: '100vw', minHeight: '100vh',
       backgroundImage: `url(${bg})`,
       backgroundSize: 'cover', backgroundPosition: 'center',
-      backgroundAttachment: 'fixed',
-      fontFamily: "'Jua', sans-serif",
+      backgroundAttachment: 'fixed', fontFamily: "'Jua', sans-serif",
     }}>
       <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.3)', zIndex: 0 }} />
 
@@ -177,57 +68,10 @@ function Main() {
           <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#4cff72', boxShadow: '0 0 6px #4cff72' }} />
           {profile.nickname}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#f5c842', fontSize: '1.4rem', textShadow: '0 0 10px #f5c842' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#f5c842', fontSize: '1.4rem' }}>
           <img src={frogNormal} alt="frog" style={{ width: '32px', imageRendering: 'pixelated' }} />
           Frog Jump
         </div>
-        {/* 상단바 공지 */}
-        {(latestPatch || latestNotice || latestEvent) && (
-          <div style={{ flex: 1, overflow: 'hidden', margin: '0 24px' }}>
-            <div style={{ display: 'flex', width: '200%' }}>
-              <div className="marquee" style={{
-                color: '#7ae8ff', fontSize: '0.85rem',
-                cursor: 'pointer', display: 'inline-block', width: '50%',
-              }}>
-                {latestPatch && (
-                  <span onClick={() => setActiveTab('패치노트')} style={{ marginRight: '40px' }}>
-                    📋 [{latestPatch.version}] {latestPatch.title}
-                  </span>
-                )}
-                {latestNotice && (
-                  <span onClick={() => setActiveTab('공지사항')} style={{ marginRight: '40px', color: '#f5c842' }}>
-                    📢 {latestNotice.title}
-                  </span>
-                )}
-                {latestEvent && (
-                  <span onClick={() => setActiveTab('이벤트')} style={{ marginRight: '40px', color: '#4cff72' }}>
-                    🎉 {latestEvent.title}
-                  </span>
-                )}
-              </div>
-              <div className="marquee" style={{
-                color: '#7ae8ff', fontSize: '0.85rem',
-                cursor: 'pointer', display: 'inline-block', width: '50%',
-              }}>
-                {latestPatch && (
-                  <span onClick={() => setActiveTab('패치노트')} style={{ marginRight: '40px' }}>
-                    📋 [{latestPatch.version}] {latestPatch.title}
-                  </span>
-                )}
-                {latestNotice && (
-                  <span onClick={() => setActiveTab('공지사항')} style={{ marginRight: '40px', color: '#f5c842' }}>
-                    📢 {latestNotice.title}
-                  </span>
-                )}
-                {latestEvent && (
-                  <span onClick={() => setActiveTab('이벤트')} style={{ marginRight: '40px', color: '#4cff72' }}>
-                    🎉 {latestEvent.title}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
         <button onClick={handleLogout} style={{
           padding: '6px 16px', borderRadius: '8px',
           border: '1px solid #4a7c3f', background: 'rgba(0,0,0,0.5)',
@@ -244,54 +88,15 @@ function Main() {
         padding: '0 32px', gap: '4px', zIndex: 100,
       }}>
         {TABS.map(tab => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            style={{
-              position: 'relative',
-              padding: '8px 24px', borderRadius: '8px',
-              border: activeTab === tab ? '1px solid #4a7c3f' : '1px solid transparent',
-              background: activeTab === tab ? 'rgba(74,124,63,0.5)' : 'transparent',
-              color: activeTab === tab ? '#f5c842' : '#888',
-              cursor: 'pointer', fontSize: '1rem',
-              fontFamily: "'Jua', sans-serif",
-              transition: 'all 0.2s',
-              textShadow: activeTab === tab ? '0 0 8px #f5c842' : 'none',
-            }}
-          >
+          <button key={tab} onClick={() => setActiveTab(tab)} style={{
+            padding: '8px 24px', borderRadius: '8px',
+            border: activeTab === tab ? '1px solid #4a7c3f' : '1px solid transparent',
+            background: activeTab === tab ? 'rgba(74,124,63,0.5)' : 'transparent',
+            color: activeTab === tab ? '#f5c842' : '#888',
+            cursor: 'pointer', fontSize: '1rem',
+            fontFamily: "'Jua', sans-serif",
+          }}>
             {tab}
-            {tab === '패치노트' && hasNewPatch && (
-              <span style={{
-                position: 'absolute', top: '2px', right: '2px',
-                background: '#ff4444', color: '#fff',
-                fontSize: '0.6rem', padding: '1px 4px',
-                borderRadius: '4px', fontFamily: "'Jua', sans-serif",
-              }}>NEW</span>
-            )}
-            {tab === '게시판' && hasNewPost && (
-              <span style={{
-                position: 'absolute', top: '2px', right: '2px',
-                background: '#ff4444', color: '#fff',
-                fontSize: '0.6rem', padding: '1px 4px',
-                borderRadius: '4px', fontFamily: "'Jua', sans-serif",
-              }}>NEW</span>
-            )}
-            {tab === '공지사항' && hasNewNotice && (
-            <span style={{
-                position: 'absolute', top: '2px', right: '2px',
-                background: '#ff4444', color: '#fff',
-                fontSize: '0.6rem', padding: '1px 4px',
-                borderRadius: '4px', fontFamily: "'Jua', sans-serif",
-            }}>NEW</span>
-            )}
-            {tab === '이벤트' && hasNewEvent && (
-            <span style={{
-                position: 'absolute', top: '2px', right: '2px',
-                background: '#ff4444', color: '#fff',
-                fontSize: '0.6rem', padding: '1px 4px',
-                borderRadius: '4px', fontFamily: "'Jua', sans-serif",
-            }}>NEW</span>
-            )}
           </button>
         ))}
       </div>
@@ -302,308 +107,87 @@ function Main() {
         maxWidth: '1200px', margin: '0 auto',
         padding: '124px 24px 40px',
       }}>
-        {activeTab === '홈' && <HomeTab profile={profile} />}
-        {activeTab === '랭킹' && <RankingTab />}
-        {activeTab === '패치노트' && <PatchTab profile={profile} />}
-        {activeTab === '게시판' && <BoardTab profile={profile} />}
-        {activeTab === '공지사항' && <NoticeTab profile={profile} />}
-        {activeTab === '이벤트' && <EventTab profile={profile} />}
-        {activeTab === '문의' && <InquiryTab profile={profile} />}
-        {activeTab === '접속유저' && <OnlineTab />}
+        {activeTab === '홈' && <HomeTab profile={profile} setProfile={setProfile} token={token} />}
+        {activeTab === '랭킹' && <RankingTab token={token} />}
+        {activeTab === '패치노트' && <PatchTab profile={profile} token={token} />}
+        {activeTab === '게시판' && <BoardTab profile={profile} token={token} />}
+        {activeTab === '공지사항' && <NoticeTab profile={profile} token={token} />}
+        {activeTab === '이벤트' && <EventTab profile={profile} token={token} />}
+        {activeTab === '문의' && <InquiryTab profile={profile} token={token} />}
+        {activeTab === '접속유저' && <OnlineTab token={token} />}
       </div>
     </div>
   );
 }
-// RankingSummary 함수
-function RankingSummary() {
-  const [rankings, setRankings] = useState([]);
 
-  useEffect(() => {
-    const fetchRankings = async () => {
-      const { data } = await supabase
-        .from('user_best_scores')
-        .select('score, users(nickname)')
-        .order('score', { ascending: false })
-        .limit(5);
-      setRankings(data || []);
-    };
-    fetchRankings();
-  }, []);
-
-  return (
-    <div style={{
-      flex: 1, background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
-      borderRadius: '16px', padding: '24px', minHeight: '400px',
-      boxShadow: '0 0 20px rgba(74,124,63,0.3)',
-    }}>
-      <h3 style={{ color: '#f5c842', margin: '0 0 16px', fontSize: '1.2rem' }}>🏆 랭킹보드 TOP 5</h3>
-      {rankings.length === 0 ? (
-        <div style={{ color: '#888', textAlign: 'center', paddingTop: '60px', fontSize: '0.9rem' }}>
-          랭킹 데이터가 없습니다.
-        </div>
-      ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <tbody>
-            {rankings.map((r, i) => (
-              <tr key={i} style={{ borderBottom: '1px solid rgba(74,124,63,0.2)' }}>
-                <td style={{ color: i === 0 ? '#f5c842' : i === 1 ? '#ccc' : i === 2 ? '#cd7f32' : '#888', padding: '10px', textAlign: 'center', width: '40px' }}>
-                  {i === 0 ? '🏆' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}
-                </td>
-                <td style={{ color: '#fff', padding: '10px' }}>{r.users?.nickname}</td>
-                <td style={{ color: '#f5c842', padding: '10px', textAlign: 'right' }}>{r.score}점</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
-  );
-}
-function CalendarGrid({ attended, onAttendance }) {
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = today.getMonth();
-  const todayDate = today.getDate();
-
-  // 이번 달 1일의 요일 (월요일 시작으로 조정)
-  const firstDay = new Date(year, month, 1).getDay();
-  const adjustedFirstDay = firstDay === 0 ? 6 : firstDay - 1;
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-
-  const cells = [];
-
-  // 빈 칸 채우기
-  for (let i = 0; i < adjustedFirstDay; i++) {
-    cells.push(<div key={`empty-${i}`} />);
-  }
-
-  // 날짜 채우기
-  for (let d = 1; d <= daysInMonth; d++) {
-    const isToday = d === todayDate;
-    const isPast = d < todayDate;
-
-    cells.push(
-      <div
-        key={d}
-        onClick={isToday && !attended ? onAttendance : undefined}
-        style={{
-          textAlign: 'center', padding: '6px 2px',
-          borderRadius: '6px', fontSize: '0.85rem',
-          cursor: isToday && !attended ? 'pointer' : 'default',
-          background: isToday
-            ? attended ? 'rgba(74,124,63,0.6)' : 'rgba(245,200,66,0.3)'
-            : 'transparent',
-          border: isToday ? '1px solid #4a7c3f' : '1px solid transparent',
-          color: isToday ? '#f5c842' : isPast ? '#555' : '#aaa',
-          fontWeight: isToday ? 'bold' : 'normal',
-          transition: 'all 0.15s',
-        }}
-        onMouseEnter={e => { if (isToday && !attended) e.currentTarget.style.background = 'rgba(245,200,66,0.5)'; }}
-        onMouseLeave={e => { if (isToday && !attended) e.currentTarget.style.background = 'rgba(245,200,66,0.3)'; }}
-      >
-        {isToday && attended ? '✅' : d}
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px' }}>
-      {cells}
-    </div>
-  );
-}
-// 홈 탭
-function HomeTab({ profile }) {
+// ── 홈 탭 ────────────────────────────────────────────────
+function HomeTab({ profile, setProfile, token }) {
   const [editMode, setEditMode] = useState(false);
   const [nickname, setNickname] = useState(profile.nickname);
-  const [showModal, setShowModal] = useState(false);  // ← 추가
   const [bestScore, setBestScore] = useState(0);
-  const [todayScore, setTodayScore] = useState(0);
   const [attended, setAttended] = useState(false);
 
   useEffect(() => {
     const fetchScores = async () => {
-      // 역대 최고점수
-      const { data: best } = await supabase
-        .from('scores')
-        .select('score')
-        .eq('user_id', profile.id)
-        .order('score', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (best) setBestScore(best.score);
-
-      // 오늘 최고점수
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const { data: todayBest } = await supabase
-        .from('scores')
-        .select('score')
-        .eq('user_id', profile.id)
-        .gte('created_at', today.toISOString())
-        .order('score', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (todayBest) setTodayScore(todayBest.score);
-
-      // 오늘 출석했는지 확인
-      const { data: userInfo } = await supabase
-      .from('users')
-      .select('last_attendance')
-      .eq('id', profile.id)
-      .single();
-      
-      const now = new Date();
-      const koreaTime = new Date(now.getTime() + 9 * 60 * 60 * 1000);
-      const todayStr = koreaTime.toISOString().split('T')[0];
-      if (userInfo?.last_attendance === todayStr) setAttended(true);
+      const res = await api('GET', '/leaderboard?page=1&size=100', null, token);
+      if (!res) return;
+      const data = await res.json();
+      const mine = data.items?.find(r => r.username === profile.username);
+      if (mine) setBestScore(mine.score);
     };
     fetchScores();
-  }, [profile.id]);
 
-  const handleDownload = () => {
-    setShowModal(true);
-    setTimeout(() => {
-      window.open('https://github.com/s38827550-sys/FrogJumpGame/releases/download/v1.2.2/FrogJump_v1.2.2.zip', '_blank');
-    }, 1500);
-  };
+    const today = new Date().toISOString().split('T')[0];
+    if (profile.last_attendance === today) setAttended(true);
+  }, [profile, token]);
 
   const handleAttendance = async () => {
-    // UTC+9 한국 시간 기준으로 오늘 날짜
-    const now = new Date();
-    const koreaTime = new Date(now.getTime() + 9 * 60 * 60 * 1000);
-    const today = koreaTime.toISOString().split('T')[0];
-  
-    const { data: userInfo } = await supabase
-      .from('users')
-      .select('last_attendance, points')
-      .eq('id', profile.id)
-      .single();
-
-    if (userInfo?.last_attendance === today) {
-      alert('오늘은 이미 출석했어요! 내일 다시 와주세요 🐸');
-      return;
+    const res = await api('POST', '/users/me/attendance', null, token);
+    if (!res) return;
+    if (res.ok) {
+      setAttended(true);
+      const profileRes = await api('GET', '/users/me', null, token);
+      if (profileRes) setProfile(await profileRes.json());
+      alert('출석체크 완료! +3 포인트 획득 🎉');
+    } else {
+      const data = await res.json();
+      alert(data.detail || '출석체크 실패');
     }
-
-    // 포인트 +3 지급
-    const newPoints = (userInfo?.points || 0) + 3;
-    const { error } = await supabase
-      .from('users')
-      .update({
-        points: newPoints,
-        last_attendance: today,
-      })
-      .eq('id', profile.id);
-
-    if (error) { alert('출석체크 실패했어요.'); return; }
-
-    // 포인트 로그 기록
-    const { error: logError } = await supabase.from('point_logs').insert({
-    user_id: profile.id,
-    points: 3,
-    reason: '출석체크',
-    });
-
-    if (logError) { 
-    console.log('포인트 로그 에러:', logError);
-    }
-
-    setAttended(true);
-    alert('출석체크 완료! +3 포인트 획득 🎉');
-    window.location.reload();
   };
 
   const handleSaveNickname = async () => {
     if (nickname === profile.nickname) { alert('닉네임이 같아요!'); return; }
-    if ((profile.points || 0) < 100) { alert('포인트가 부족해요! (100포인트 필요)'); return; }
-
-    // 닉네임 중복 확인
-    const { data: existNick } = await supabase
-      .from('users')
-      .select('id')
-      .eq('nickname', nickname)
-      .single();
-    if (existNick) { alert('이미 사용중인 닉네임입니다.'); return; }
-
-    // 닉네임 변경 + 포인트 차감
-    const { error } = await supabase
-      .from('users')
-      .update({
-        nickname: nickname,
-        points: (profile.points || 0) - 100,
-      })
-      .eq('id', profile.id);
-
-    if (error) { alert('변경 실패했어요.'); return; }
-    alert('닉네임이 변경됐어요! 🐸');
-    window.location.reload();
+    const res = await api('PATCH', '/users/me/nickname', { nickname }, token);
+    if (!res) return;
+    if (res.ok) {
+      const profileRes = await api('GET', '/users/me', null, token);
+      if (profileRes) setProfile(await profileRes.json());
+      setEditMode(false);
+      alert('닉네임이 변경됐어요! 🐸');
+    } else {
+      const data = await res.json();
+      alert(data.detail || '변경 실패');
+    }
   };
 
   const handleDeleteAccount = async () => {
     if (!window.confirm('정말 탈퇴하실 건가요?')) return;
-    if (!window.confirm('탈퇴 후 24시간 동안 재가입이 불가능해요. 정말 탈퇴할까요?')) return;
+    const res = await api('DELETE', '/users/me', null, token);
+    if (res?.ok) {
+      clearToken();
+      alert('탈퇴가 완료됐어요 🐸');
+      window.location.href = '/login';
+    }
+  };
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-
-    // 탈퇴 예약 상태로 변경 (바로 삭제 X)
-    const { error } = await supabase
-      .from('users')
-      .update({
-        status: 'deleted',
-        deleted_at: new Date().toISOString(),
-      })
-      .eq('id', user.id);
-
-    if (error) { alert('탈퇴 처리 실패했어요.'); return; }
-
-    // 온라인 유저에서 삭제
-    await supabase.from('online_users').delete().eq('id', user.id);
-
-    await supabase.auth.signOut();
-    alert('탈퇴가 완료됐어요. 이용해주셔서 감사합니다 🐸');
-    window.location.href = '/login';
+  const handleDownload = () => {
+    window.open('https://github.com/s38827550-sys/FrogJumpGame/releases/download/v1.2.2/FrogJump_v1.2.2.zip', '_blank');
   };
 
   return (
-  <>
-    {/* 다운로드 모달 */}
-    {showModal && (
-      <div style={{
-        position: 'fixed', inset: 0, zIndex: 999,
-        background: 'rgba(0,0,0,0.7)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        <div style={{
-          background: '#0a1628', border: '2px solid #4a7c3f',
-          borderRadius: '16px', padding: '40px', textAlign: 'center',
-          boxShadow: '0 0 30px rgba(74,124,63,0.5)',
-          maxWidth: '400px', width: '90%',
-        }}>
-          <div style={{ fontSize: '3rem', marginBottom: '16px' }}>🐸</div>
-          <h3 style={{ color: '#f5c842', margin: '0 0 12px', fontFamily: "'Jua', sans-serif" }}>
-            다운로드가 시작됩니다!
-          </h3>
-          <p style={{ color: '#aaa', fontSize: '0.9rem', margin: '0 0 8px', fontFamily: "'Jua', sans-serif" }}>
-            압축 해제 후 FrogJump.exe를 실행해주세요
-          </p>
-          <p style={{ color: '#888', fontSize: '0.8rem', margin: '0 0 24px', fontFamily: "'Jua', sans-serif" }}>
-            잠시 후 자동으로 다운로드됩니다...
-          </p>
-          <button onClick={() => setShowModal(false)} style={{
-            padding: '10px 24px', borderRadius: '8px',
-            border: '1px solid #4a7c3f', background: 'rgba(74,124,63,0.3)',
-            color: '#fff', cursor: 'pointer', fontSize: '1rem',
-            fontFamily: "'Jua', sans-serif",
-          }}>확인</button>
-        </div>
-      </div>
-    )}
-
     <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
-      {/* 왼쪽: 게임시작 + 프로필 */}
       <div style={{ width: '300px', flexShrink: 0 }}>
-        {/* 게임시작 버튼 */}
+        {/* 게임 다운로드 */}
         <div style={{
           background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
           borderRadius: '16px 16px 0 0', padding: '16px',
@@ -614,11 +198,7 @@ function HomeTab({ profile }) {
             border: '2px solid #4a7c3f', background: '#4a7c3f',
             color: '#fff', fontSize: '1.2rem', cursor: 'pointer',
             fontFamily: "'Jua', sans-serif",
-            animation: 'pulse 2s ease-in-out infinite',
-          }}
-            onMouseEnter={e => e.target.style.background = '#5a9c4f'}
-            onMouseLeave={e => e.target.style.background = '#4a7c3f'}
-          >🎮 게임 다운로드</button>
+          }}>🎮 게임 다운로드</button>
         </div>
 
         {/* 프로필 카드 */}
@@ -636,19 +216,14 @@ function HomeTab({ profile }) {
             <div>
               <p style={{ color: '#f5c842', fontSize: '1rem', margin: '0 0 4px' }}>{profile.nickname}</p>
               <p style={{ color: '#aaa', fontSize: '0.8rem', margin: '0 0 4px' }}>@{profile.username}</p>
-              <p style={{ color: '#aaa', fontSize: '0.75rem', margin: 0 }}>
-                오늘 최고점수: <span style={{ color: '#f5c842' }}>{todayScore}점</span>
-              </p>
-              <p style={{ color: '#aaa', fontSize: '0.75rem', margin: 0 }}>
-                역대 최고점수: <span style={{ color: '#7ae8ff' }}>{bestScore}점</span>
-              </p>
+              <p style={{ color: '#aaa', fontSize: '0.75rem', margin: 0 }}>역대 최고: <span style={{ color: '#7ae8ff' }}>{bestScore}점</span></p>
               <p style={{ color: '#aaa', fontSize: '0.75rem', margin: 0 }}>포인트: <span style={{ color: '#7ae8ff' }}>{profile.points || 0}</span></p>
             </div>
           </div>
 
           <button onClick={() => setEditMode(!editMode)} style={{
             width: '100%', padding: '8px', borderRadius: '8px',
-            border: '1px solid #4a7c3f', background: editMode ? 'rgba(74,124,63,0.4)' : 'rgba(0,0,0,0.5)',
+            border: '1px solid #4a7c3f', background: 'transparent',
             color: '#ccc', cursor: 'pointer', fontSize: '0.95rem',
             fontFamily: "'Jua', sans-serif", marginBottom: '8px',
           }}>
@@ -657,11 +232,8 @@ function HomeTab({ profile }) {
 
           {editMode && (
             <div style={{ marginBottom: '8px' }}>
-              <p style={{ color: '#f5c842', fontSize: '0.8rem', margin: '0 0 8px' }}>
-                ⚠️ 닉네임 변경 시 100포인트 차감
-              </p>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                <span style={{ color: '#aaa', fontSize: '0.85rem', width: '50px' }}>닉네임</span>
+              <p style={{ color: '#f5c842', fontSize: '0.8rem', margin: '0 0 8px' }}>⚠️ 닉네임 변경 시 100포인트 차감</p>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
                 <input value={nickname} onChange={e => setNickname(e.target.value)} style={{
                   flex: 1, padding: '6px 10px', borderRadius: '6px',
                   border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
@@ -680,91 +252,68 @@ function HomeTab({ profile }) {
 
           <button onClick={handleDeleteAccount} style={{
             width: '100%', padding: '8px', borderRadius: '8px',
-            border: '1px solid #ff4444', background: 'rgba(0,0,0,0.5)',
+            border: '1px solid #ff4444', background: 'transparent',
             color: '#ff4444', cursor: 'pointer', fontSize: '0.95rem',
             fontFamily: "'Jua', sans-serif",
           }}>회원탈퇴</button>
         </div>
-        
-        {/* 출석체크 달력 */}
+
+        {/* 출석체크 */}
         <div style={{
           background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
           borderRadius: '16px', padding: '20px', marginTop: '16px',
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-            <h4 style={{ color: '#f5c842', margin: 0, fontSize: '1rem' }}>📅 출석체크</h4>
-            <span style={{ color: '#aaa', fontSize: '0.85rem' }}>
-              {new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long' })}
-            </span>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', marginBottom: '4px' }}>
-            {['월', '화', '수', '목', '금', '토', '일'].map(d => (
-              <div key={d} style={{ textAlign: 'center', color: '#888', fontSize: '0.75rem', padding: '4px' }}>{d}</div>
-            ))}
-          </div>
-          <CalendarGrid attended={attended} onAttendance={handleAttendance} />
+          <h4 style={{ color: '#f5c842', margin: '0 0 12px' }}>📅 출석체크</h4>
+          <button onClick={handleAttendance} disabled={attended} style={{
+            width: '100%', padding: '10px', borderRadius: '8px',
+            border: '1px solid #4a7c3f',
+            background: attended ? 'rgba(74,124,63,0.2)' : 'rgba(74,124,63,0.5)',
+            color: attended ? '#888' : '#fff',
+            cursor: attended ? 'default' : 'pointer',
+            fontSize: '1rem', fontFamily: "'Jua', sans-serif",
+          }}>
+            {attended ? '✅ 오늘 출석 완료' : '출석체크 (+3포인트)'}
+          </button>
         </div>
       </div>
 
-      {/* 오른쪽: 랭킹 요약 */}
-      <RankingSummary />
+      {/* 랭킹 요약 */}
+      <RankingSummary token={token} />
     </div>
-  </>
   );
 }
 
-// 랭킹 탭
-function RankingTab() {
+function RankingSummary({ token }) {
   const [rankings, setRankings] = useState([]);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchRankings = async () => {
-      const { data } = await supabase
-        .from('user_best_scores')
-        .select('score, created_at, users(nickname)')
-        .order('score', { ascending: false })
-        .limit(50);
-      setRankings(data || []);
-      setLoading(false);
+    const fetch = async () => {
+      const res = await api('GET', '/leaderboard?page=1&size=5', null, token);
+      if (!res) return;
+      const data = await res.json();
+      setRankings(data.items || []);
     };
-    fetchRankings();
-  }, []);
+    fetch();
+  }, [token]);
 
   return (
     <div style={{
-      background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
-      borderRadius: '16px', padding: '24px',
+      flex: 1, background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
+      borderRadius: '16px', padding: '24px', minHeight: '400px',
     }}>
-      <h3 style={{ color: '#f5c842', margin: '0 0 16px', fontSize: '1.2rem' }}>🏆 전체 랭킹</h3>
-      {loading ? (
-        <div style={{ color: '#888', textAlign: 'center', paddingTop: '40px' }}>로딩중...</div>
-      ) : rankings.length === 0 ? (
-        <div style={{ color: '#888', textAlign: 'center', paddingTop: '40px' }}>랭킹 데이터가 없습니다.</div>
+      <h3 style={{ color: '#f5c842', margin: '0 0 16px' }}>🏆 랭킹보드 TOP 5</h3>
+      {rankings.length === 0 ? (
+        <div style={{ color: '#888', textAlign: 'center', paddingTop: '60px' }}>랭킹 데이터가 없습니다.</div>
       ) : (
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ borderBottom: '1px solid #4a7c3f' }}>
-              <th style={{ color: '#aaa', padding: '8px', textAlign: 'center', width: '60px' }}>순위</th>
-              <th style={{ color: '#aaa', padding: '8px', textAlign: 'left' }}>닉네임</th>
-              <th style={{ color: '#aaa', padding: '8px', textAlign: 'right' }}>점수</th>
-              <th style={{ color: '#aaa', padding: '8px', textAlign: 'right' }}>날짜</th>
-            </tr>
-          </thead>
           <tbody>
             {rankings.map((r, i) => (
-              <tr key={i} style={{
-                borderBottom: '1px solid rgba(74,124,63,0.2)',
-                background: i === 0 ? 'rgba(245,200,66,0.1)' : i === 1 ? 'rgba(192,192,192,0.1)' : i === 2 ? 'rgba(205,127,50,0.1)' : 'transparent',
-              }}>
-                <td style={{ color: i === 0 ? '#f5c842' : i === 1 ? '#ccc' : i === 2 ? '#cd7f32' : '#888', padding: '10px', textAlign: 'center', fontSize: '1.1rem' }}>
+              <tr key={i} style={{ borderBottom: '1px solid rgba(74,124,63,0.2)' }}>
+                <td style={{ color: i === 0 ? '#f5c842' : i === 1 ? '#ccc' : i === 2 ? '#cd7f32' : '#888', padding: '10px', textAlign: 'center', width: '40px' }}>
                   {i === 0 ? '🏆' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}
                 </td>
-                <td style={{ color: '#fff', padding: '10px' }}>{r.users?.nickname}</td>
+                <td style={{ color: '#fff', padding: '10px' }}>{r.username}</td>
                 <td style={{ color: '#f5c842', padding: '10px', textAlign: 'right' }}>{r.score}점</td>
-                <td style={{ color: '#888', padding: '10px', textAlign: 'right', fontSize: '0.85rem' }}>
-                  {new Date(r.created_at).toLocaleDateString('ko-KR')}
-                </td>
               </tr>
             ))}
           </tbody>
@@ -774,203 +323,166 @@ function RankingTab() {
   );
 }
 
-// 패치노트 탭
-function PatchTab({ profile }) {
+// ── 랭킹 탭 ─────────────────────────────────────────────
+function RankingTab({ token }) {
+  const [rankings, setRankings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    const fetchRankings = async () => {
+      setLoading(true);
+      const res = await api('GET', `/leaderboard?page=${page}&size=20`, null, token);
+      if (!res) return;
+      const data = await res.json();
+      setRankings(data.items || []);
+      setTotal(data.total || 0);
+      setLoading(false);
+    };
+    fetchRankings();
+  }, [token, page]);
+
+  return (
+    <div style={{
+      background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
+      borderRadius: '16px', padding: '24px',
+    }}>
+      <h3 style={{ color: '#f5c842', margin: '0 0 16px' }}>🏆 전체 랭킹</h3>
+      {loading ? (
+        <div style={{ color: '#888', textAlign: 'center', padding: '40px' }}>로딩중...</div>
+      ) : (
+        <>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #4a7c3f' }}>
+                <th style={{ color: '#aaa', padding: '8px', textAlign: 'center', width: '60px' }}>순위</th>
+                <th style={{ color: '#aaa', padding: '8px', textAlign: 'left' }}>유저</th>
+                <th style={{ color: '#aaa', padding: '8px', textAlign: 'right' }}>점수</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rankings.map((r) => (
+                <tr key={r.rank} style={{ borderBottom: '1px solid rgba(74,124,63,0.2)' }}>
+                  <td style={{ color: r.rank === 1 ? '#f5c842' : r.rank === 2 ? '#ccc' : r.rank === 3 ? '#cd7f32' : '#888', padding: '10px', textAlign: 'center' }}>
+                    {r.rank === 1 ? '🏆' : r.rank === 2 ? '🥈' : r.rank === 3 ? '🥉' : r.rank}
+                  </td>
+                  <td style={{ color: '#fff', padding: '10px' }}>{r.username}</td>
+                  <td style={{ color: '#f5c842', padding: '10px', textAlign: 'right' }}>{r.score}점</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginTop: '16px' }}>
+            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} style={pageBtn}>이전</button>
+            <span style={{ color: '#aaa', padding: '8px' }}>{page} / {Math.ceil(total / 20)}</span>
+            <button onClick={() => setPage(p => p + 1)} disabled={page >= Math.ceil(total / 20)} style={pageBtn}>다음</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+const pageBtn = {
+  padding: '8px 16px', borderRadius: '8px',
+  border: '1px solid #4a7c3f', background: 'transparent',
+  color: '#fff', cursor: 'pointer', fontFamily: "'Jua', sans-serif",
+};
+
+// ── 패치노트 탭 ──────────────────────────────────────────
+function PatchTab({ profile, token }) {
   const [patches, setPatches] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
   const [showWrite, setShowWrite] = useState(false);
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
-  const [version, setVersion] = useState('');
-  const [selectedPatch, setSelectedPatch] = useState(null);
+  const [form, setForm] = useState({ title: '', content: '', version: '' });
+  const [comment, setComment] = useState('');
   const isAdmin = profile?.role === 'admin';
 
-  useEffect(() => {
-    fetchPatches();
-  }, []);
-
-  const fetchPatches = async () => {
-    const { data } = await supabase
-      .from('patch_notes')
-      .select('*, users(nickname)')
-      .order('created_at', { ascending: false });
-    setPatches(data || []);
+  const fetchPatches = useCallback(async () => {
+    const res = await api('GET', '/patch-notes', null, token);
+    if (!res) return;
+    const data = await res.json();
+    setPatches(data.items || []);
     setLoading(false);
-  };
+  }, [token]);
+
+  useEffect(() => { fetchPatches(); }, [fetchPatches]);
 
   const handleWrite = async () => {
-    if (!title.trim()) { alert('제목을 입력해주세요!'); return; }
-    if (!content.trim()) { alert('내용을 입력해주세요!'); return; }
-    if (!version.trim()) { alert('버전을 입력해주세요!'); return; }
-
-    const { data: { user } } = await supabase.auth.getUser();
-    const { error } = await supabase.from('patch_notes').insert({
-      user_id: user.id,
-      title: title.trim(),
-      content: content.trim(),
-      version: version.trim(),
-    });
-
-    if (error) { alert('작성 실패했어요.'); return; }
-    setTitle(''); setContent(''); setVersion('');
-    setShowWrite(false);
-    fetchPatches();
+    const res = await api('POST', '/patch-notes', form, token);
+    if (!res) return;
+    if (res.ok) { setForm({ title: '', content: '', version: '' }); setShowWrite(false); fetchPatches(); }
+    else { const d = await res.json(); alert(d.detail || '작성 실패'); }
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('정말 삭제할까요?')) return;
-    await supabase.from('patch_notes').delete().eq('id', id);
-    setSelectedPatch(null);
-    fetchPatches();
+    if (!window.confirm('삭제할까요?')) return;
+    const res = await api('DELETE', `/patch-notes/${id}`, null, token);
+    if (res?.ok) { setSelected(null); fetchPatches(); }
   };
 
-  if (selectedPatch) {
-    return (
-      <div style={{
-        background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
-        borderRadius: '16px', padding: '24px',
-      }}>
-        <button onClick={() => setSelectedPatch(null)} style={{
-          padding: '6px 16px', borderRadius: '8px',
-          border: '1px solid #4a7c3f', background: 'transparent',
-          color: '#aaa', cursor: 'pointer', fontSize: '0.9rem',
-          fontFamily: "'Jua', sans-serif", marginBottom: '16px',
-        }}>← 목록으로</button>
+  const handleComment = async (patchId) => {
+    if (!comment.trim()) return;
+    const res = await api('POST', `/patch-notes/${patchId}/comments`, { content: comment }, token);
+    if (res?.ok) {
+      setComment('');
+      const r = await api('GET', `/patch-notes/${patchId}`, null, token);
+      if (r) setSelected(await r.json());
+    }
+  };
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-          <h2 style={{ color: '#f5c842', margin: 0 }}>{selectedPatch.title}</h2>
-          <span style={{
-            background: 'rgba(74,124,63,0.4)', border: '1px solid #4a7c3f',
-            borderRadius: '6px', padding: '2px 10px', color: '#7ae8ff', fontSize: '0.85rem',
-          }}>{selectedPatch.version}</span>
-        </div>
-        <p style={{ color: '#888', fontSize: '0.85rem', margin: '0 0 24px' }}>
-          {new Date(selectedPatch.created_at).toLocaleDateString('ko-KR')}
-        </p>
-        <div style={{
-          color: '#ddd', fontSize: '1rem', lineHeight: '1.8',
-          borderTop: '1px solid #4a7c3f', paddingTop: '16px',
-          whiteSpace: 'pre-wrap',
-        }}>
-          {selectedPatch.content}
-        </div>
+  const handleDeleteComment = async (patchId, commentId) => {
+    if (!window.confirm('댓글을 삭제할까요?')) return;
+    const res = await api('DELETE', `/patch-notes/${patchId}/comments/${commentId}`, null, token);
+    if (res?.ok) {
+      const r = await api('GET', `/patch-notes/${patchId}`, null, token);
+      if (r) setSelected(await r.json());
+    }
+  };
 
-        {isAdmin && (
-          <button onClick={() => handleDelete(selectedPatch.id)} style={{
-            marginTop: '24px', padding: '8px 20px', borderRadius: '8px',
-            border: '1px solid #ff4444', background: 'transparent',
-            color: '#ff4444', cursor: 'pointer', fontSize: '0.9rem',
-            fontFamily: "'Jua', sans-serif",
-          }}>삭제</button>
-        )}
-
-        {/* 댓글 섹션 */}
-        <PatchCommentSection patchId={selectedPatch.id} profile={profile} />
+  if (selected) return (
+    <div style={cardStyle}>
+      <button onClick={() => setSelected(null)} style={backBtn}>← 목록으로</button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+        <span style={{ background: 'rgba(74,124,63,0.4)', border: '1px solid #4a7c3f', borderRadius: '6px', padding: '2px 10px', color: '#7ae8ff', fontSize: '0.85rem' }}>{selected.version}</span>
+        <h2 style={{ color: '#f5c842', margin: 0 }}>{selected.title}</h2>
       </div>
-    );
-  }
+      <p style={{ color: '#888', fontSize: '0.85rem', margin: '0 0 16px' }}>{new Date(selected.created_at).toLocaleDateString('ko-KR')}</p>
+      <div style={{ color: '#ddd', lineHeight: '1.8', borderTop: '1px solid #4a7c3f', paddingTop: '16px', whiteSpace: 'pre-wrap', marginBottom: '16px' }}>{selected.content}</div>
+      {isAdmin && <button onClick={() => handleDelete(selected.id)} style={dangerBtn}>삭제</button>}
+      <CommentSection comments={selected.comments || []} onAdd={(c) => handleComment(selected.id)} onDelete={(cid) => handleDeleteComment(selected.id, cid)} comment={comment} setComment={setComment} profile={profile} />
+    </div>
+  );
 
   return (
-    <div style={{
-      background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
-      borderRadius: '16px', padding: '24px',
-    }}>
+    <div style={cardStyle}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-        <h3 style={{ color: '#f5c842', margin: 0, fontSize: '1.2rem' }}>📋 패치노트</h3>
-        {isAdmin && (
-          <button onClick={() => setShowWrite(!showWrite)} style={{
-            padding: '8px 16px', borderRadius: '8px',
-            border: '1px solid #4a7c3f', background: showWrite ? 'rgba(74,124,63,0.4)' : 'rgba(74,124,63,0.2)',
-            color: '#fff', cursor: 'pointer', fontSize: '0.9rem',
-            fontFamily: "'Jua', sans-serif",
-          }}>
-            {showWrite ? '▲ 닫기' : '✏️ 작성'}
-          </button>
-        )}
+        <h3 style={{ color: '#f5c842', margin: 0 }}>📋 패치노트</h3>
+        {isAdmin && <button onClick={() => setShowWrite(!showWrite)} style={writeBtn}>{showWrite ? '▲ 닫기' : '✏️ 작성'}</button>}
       </div>
-
-      {/* 작성 폼 - 관리자만 */}
       {isAdmin && showWrite && (
-        <div style={{
-          background: 'rgba(74,124,63,0.1)', border: '1px solid #4a7c3f',
-          borderRadius: '12px', padding: '16px', marginBottom: '16px',
-        }}>
-          <input
-            placeholder="버전 (예: v1.2)"
-            value={version}
-            onChange={e => setVersion(e.target.value)}
-            style={{
-              width: '100%', padding: '10px', borderRadius: '8px',
-              border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
-              color: '#fff', fontSize: '1rem', outline: 'none',
-              fontFamily: "'Jua', sans-serif", marginBottom: '8px',
-              boxSizing: 'border-box',
-            }}
-          />
-          <input
-            placeholder="제목"
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-            style={{
-              width: '100%', padding: '10px', borderRadius: '8px',
-              border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
-              color: '#fff', fontSize: '1rem', outline: 'none',
-              fontFamily: "'Jua', sans-serif", marginBottom: '8px',
-              boxSizing: 'border-box',
-            }}
-          />
-          <textarea
-            placeholder="패치 내용을 입력해주세요..."
-            value={content}
-            onChange={e => setContent(e.target.value)}
-            rows={6}
-            style={{
-              width: '100%', padding: '10px', borderRadius: '8px',
-              border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
-              color: '#fff', fontSize: '0.95rem', outline: 'none',
-              fontFamily: "'Jua', sans-serif", resize: 'vertical',
-              boxSizing: 'border-box',
-            }}
-          />
-          <button onClick={handleWrite} style={{
-            marginTop: '8px', padding: '10px 24px', borderRadius: '8px',
-            border: 'none', background: '#4a7c3f',
-            color: '#fff', cursor: 'pointer', fontSize: '1rem',
-            fontFamily: "'Jua', sans-serif",
-          }}>등록</button>
+        <div style={formStyle}>
+          <input placeholder="버전 (예: v1.2)" value={form.version} onChange={e => setForm(p => ({ ...p, version: e.target.value }))} style={inputStyle} />
+          <input placeholder="제목" value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} style={inputStyle} />
+          <textarea placeholder="내용" value={form.content} onChange={e => setForm(p => ({ ...p, content: e.target.value }))} rows={5} style={{ ...inputStyle, resize: 'vertical' }} />
+          <button onClick={handleWrite} style={submitBtn}>등록</button>
         </div>
       )}
-
-      {/* 패치노트 목록 */}
-      {loading ? (
-        <div style={{ color: '#888', textAlign: 'center', padding: '40px' }}>로딩중...</div>
-      ) : patches.length === 0 ? (
-        <div style={{ color: '#888', textAlign: 'center', padding: '40px' }}>패치노트가 없습니다.</div>
-      ) : (
+      {loading ? <div style={loadingStyle}>로딩중...</div> : patches.length === 0 ? <div style={emptyStyle}>패치노트가 없습니다.</div> : (
         <div>
-          {patches.map((patch, i) => (
-            <div
-              key={patch.id}
-              onClick={() => setSelectedPatch(patch)}
-              style={{
-                padding: '14px 16px',
-                borderBottom: i < patches.length - 1 ? '1px solid rgba(74,124,63,0.3)' : 'none',
-                cursor: 'pointer', borderRadius: '8px', transition: 'background 0.15s',
-              }}
+          {patches.map((p, i) => (
+            <div key={p.id} onClick={async () => { const r = await api('GET', `/patch-notes/${p.id}`, null, token); if (r) setSelected(await r.json()); }}
+              style={{ ...listItem, borderBottom: i < patches.length - 1 ? '1px solid rgba(74,124,63,0.3)' : 'none' }}
               onMouseEnter={e => e.currentTarget.style.background = 'rgba(74,124,63,0.1)'}
-              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-            >
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <span style={{
-                    background: 'rgba(74,124,63,0.4)', border: '1px solid #4a7c3f',
-                    borderRadius: '6px', padding: '2px 8px', color: '#7ae8ff', fontSize: '0.8rem',
-                  }}>{patch.version}</span>
-                  <span style={{ color: '#fff', fontSize: '1rem' }}>{patch.title}</span>
+                  <span style={{ background: 'rgba(74,124,63,0.4)', border: '1px solid #4a7c3f', borderRadius: '6px', padding: '2px 8px', color: '#7ae8ff', fontSize: '0.8rem' }}>{p.version}</span>
+                  <span style={{ color: '#fff' }}>{p.title}</span>
                 </div>
-                <span style={{ color: '#888', fontSize: '0.8rem' }}>
-                  {new Date(patch.created_at).toLocaleDateString('ko-KR')}
-                </span>
+                <span style={{ color: '#888', fontSize: '0.8rem' }}>{new Date(p.created_at).toLocaleDateString('ko-KR')}</span>
               </div>
             </div>
           ))}
@@ -980,449 +492,118 @@ function PatchTab({ profile }) {
   );
 }
 
-function CommentSection({ postId, profile }) {
-  const [comments, setComments] = useState([]);
-  const [commentText, setCommentText] = useState('');
-
-  useEffect(() => {
-    const fetchComments = async () => {
-      const { data } = await supabase
-        .from('comments')
-        .select('*, users(nickname)')
-        .eq('post_id', postId)
-        .order('created_at', { ascending: true });
-      setComments(data || []);
-    };
-    fetchComments();
-  }, [postId]);
-
-  const refreshComments = async () => {
-    const { data } = await supabase
-      .from('comments')
-      .select('*, users(nickname)')
-      .eq('post_id', postId)
-      .order('created_at', { ascending: true });
-    setComments(data || []);
-  };
-  
-  const handleAddComment = async () => {
-    if (!commentText.trim()) { alert('댓글을 입력해주세요!'); return; }
-    const { data: { session } } = await supabase.auth.getSession();
-    const { error } = await supabase.from('comments').insert({
-      post_id: postId,
-      user_id: session.user.id,
-      content: commentText.trim(),
-    });
-    if (error) { alert('댓글 작성 실패했어요.'); return; }
-    setCommentText('');
-    refreshComments();
-  };
-
-  const handleDeleteComment = async (commentId) => {
-    if (!window.confirm('댓글을 삭제할까요?')) return;
-    await supabase.from('comments').delete().eq('id', commentId);
-    refreshComments();
-  };
-
-  return (
-    <div style={{ borderTop: '1px solid #4a7c3f', paddingTop: '16px', marginTop: '16px' }}>
-      <h4 style={{ color: '#f5c842', margin: '0 0 16px', fontSize: '1rem' }}>
-        💬 댓글 {comments.length}개
-      </h4>
-      {comments.length === 0 ? (
-        <p style={{ color: '#888', fontSize: '0.9rem', marginBottom: '16px' }}>첫 댓글을 남겨보세요!</p>
-      ) : (
-        <div style={{ marginBottom: '16px' }}>
-          {comments.map(comment => (
-            <div key={comment.id} style={{
-              background: 'rgba(255,255,255,0.05)',
-              borderRadius: '8px', padding: '12px', marginBottom: '8px',
-              border: '1px solid rgba(74,124,63,0.2)',
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                <span style={{ color: '#f5c842', fontSize: '0.85rem' }}>{comment.users?.nickname}</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ color: '#888', fontSize: '0.75rem' }}>
-                    {new Date(comment.created_at).toLocaleDateString('ko-KR')}
-                  </span>
-                  {comment.user_id === profile.id && (
-                    <button onClick={() => handleDeleteComment(comment.id)} style={{
-                      padding: '2px 8px', borderRadius: '4px',
-                      border: '1px solid #ff4444', background: 'transparent',
-                      color: '#ff4444', cursor: 'pointer', fontSize: '0.75rem',
-                      fontFamily: "'Jua', sans-serif",
-                    }}>삭제</button>
-                  )}
-                </div>
-              </div>
-              <p style={{ color: '#ddd', fontSize: '0.9rem', margin: 0 }}>{comment.content}</p>
-            </div>
-          ))}
-        </div>
-      )}
-      <div style={{ display: 'flex', gap: '8px' }}>
-        <input
-          placeholder="댓글을 입력해주세요..."
-          value={commentText}
-          onChange={e => setCommentText(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleAddComment()}
-          style={{
-            flex: 1, padding: '10px', borderRadius: '8px',
-            border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
-            color: '#fff', fontSize: '0.9rem', outline: 'none',
-            fontFamily: "'Jua', sans-serif",
-          }}
-        />
-        <button onClick={handleAddComment} style={{
-          padding: '10px 20px', borderRadius: '8px',
-          border: 'none', background: '#4a7c3f',
-          color: '#fff', cursor: 'pointer', fontSize: '0.9rem',
-          fontFamily: "'Jua', sans-serif",
-        }}>등록</button>
-      </div>
-    </div>
-  );
-}
-
-function PatchCommentSection({ patchId, profile }) {
-  const [comments, setComments] = useState([]);
-  const [commentText, setCommentText] = useState('');
-
-  useEffect(() => {
-    const fetchComments = async () => {
-      const { data } = await supabase
-        .from('patch_comments')
-        .select('*, users(nickname)')
-        .eq('patch_id', patchId)
-        .order('created_at', { ascending: true });
-      setComments(data || []);
-    };
-    fetchComments();
-  }, [patchId]);
-
-  const refreshComments = async () => {
-    const { data } = await supabase
-      .from('patch_comments')
-      .select('*, users(nickname)')
-      .eq('patch_id', patchId)
-      .order('created_at', { ascending: true });
-    setComments(data || []);
-  };
-
-  const handleAddComment = async () => {
-    if (!commentText.trim()) { alert('댓글을 입력해주세요!'); return; }
-    const { data: { user } } = await supabase.auth.getUser();
-    const { error } = await supabase.from('patch_comments').insert({
-      patch_id: patchId,
-      user_id: user.id,
-      content: commentText.trim(),
-    });
-    if (error) { alert('댓글 작성 실패했어요.'); return; }
-    setCommentText('');
-    refreshComments();
-  };
-
-  const handleDeleteComment = async (commentId) => {
-    if (!window.confirm('댓글을 삭제할까요?')) return;
-    await supabase.from('patch_comments').delete().eq('id', commentId);
-    refreshComments();
-  };
-
-  return (
-    <div style={{ borderTop: '1px solid #4a7c3f', paddingTop: '16px', marginTop: '16px' }}>
-      <h4 style={{ color: '#f5c842', margin: '0 0 16px', fontSize: '1rem' }}>
-        💬 댓글 {comments.length}개
-      </h4>
-      {comments.length === 0 ? (
-        <p style={{ color: '#888', fontSize: '0.9rem', marginBottom: '16px' }}>첫 댓글을 남겨보세요!</p>
-      ) : (
-        <div style={{ marginBottom: '16px' }}>
-          {comments.map(comment => (
-            <div key={comment.id} style={{
-              background: 'rgba(255,255,255,0.05)',
-              borderRadius: '8px', padding: '12px', marginBottom: '8px',
-              border: '1px solid rgba(74,124,63,0.2)',
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                <span style={{ color: '#f5c842', fontSize: '0.85rem' }}>{comment.users?.nickname}</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ color: '#888', fontSize: '0.75rem' }}>
-                    {new Date(comment.created_at).toLocaleDateString('ko-KR')}
-                  </span>
-                  {comment.user_id === profile.id && (
-                    <button onClick={() => handleDeleteComment(comment.id)} style={{
-                      padding: '2px 8px', borderRadius: '4px',
-                      border: '1px solid #ff4444', background: 'transparent',
-                      color: '#ff4444', cursor: 'pointer', fontSize: '0.75rem',
-                      fontFamily: "'Jua', sans-serif",
-                    }}>삭제</button>
-                  )}
-                </div>
-              </div>
-              <p style={{ color: '#ddd', fontSize: '0.9rem', margin: 0 }}>{comment.content}</p>
-            </div>
-          ))}
-        </div>
-      )}
-      <div style={{ display: 'flex', gap: '8px' }}>
-        <input
-          placeholder="댓글을 입력해주세요..."
-          value={commentText}
-          onChange={e => setCommentText(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleAddComment()}
-          style={{
-            flex: 1, padding: '10px', borderRadius: '8px',
-            border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
-            color: '#fff', fontSize: '0.9rem', outline: 'none',
-            fontFamily: "'Jua', sans-serif",
-          }}
-        />
-        <button onClick={handleAddComment} style={{
-          padding: '10px 20px', borderRadius: '8px',
-          border: 'none', background: '#4a7c3f',
-          color: '#fff', cursor: 'pointer', fontSize: '0.9rem',
-          fontFamily: "'Jua', sans-serif",
-        }}>등록</button>
-      </div>
-    </div>
-  );
-}
-
-// 게시판 탭
-function BoardTab({ profile }) {
+// ── 게시판 탭 ────────────────────────────────────────────
+function BoardTab({ profile, token }) {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
   const [showWrite, setShowWrite] = useState(false);
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
-  const [selectedPost, setSelectedPost] = useState(null);
+  const [form, setForm] = useState({ title: '', content: '' });
+  const [editMode, setEditMode] = useState(false);
+  const [editForm, setEditForm] = useState({ title: '', content: '' });
+  const [comment, setComment] = useState('');
 
-  useEffect(() => {
-    fetchPosts();
-  }, []);
-
-  const fetchPosts = async () => {
-    const { data } = await supabase
-      .from('posts')
-      .select('*, users(nickname)')
-      .order('created_at', { ascending: false });
-    setPosts(data || []);
+  const fetchPosts = useCallback(async () => {
+    const res = await api('GET', '/posts', null, token);
+    if (!res) return;
+    const data = await res.json();
+    setPosts(data.items || []);
     setLoading(false);
-  };
+  }, [token]);
+
+  useEffect(() => { fetchPosts(); }, [fetchPosts]);
 
   const handleWrite = async () => {
-    if (!title.trim()) { alert('제목을 입력해주세요!'); return; }
-    if (!content.trim()) { alert('내용을 입력해주세요!'); return; }
-
-    const { data: { user } } = await supabase.auth.getUser();
-    const { error } = await supabase.from('posts').insert({
-      user_id: user.id,
-      title: title.trim(),
-      content: content.trim(),
-    });
-
-    if (error) { alert('글 작성 실패했어요.'); return; }
-    setTitle('');
-    setContent('');
-    setShowWrite(false);
-    fetchPosts();
+    const res = await api('POST', '/posts', form, token);
+    if (res?.ok) { setForm({ title: '', content: '' }); setShowWrite(false); fetchPosts(); }
+    else { const d = await res.json(); alert(d.detail || '작성 실패'); }
   };
-
-  const handleDelete = async (postId) => {
-    if (!window.confirm('정말 삭제할까요?')) return;
-    await supabase.from('posts').delete().eq('id', postId);
-    setSelectedPost(null);
-    fetchPosts();
-  };
-  const [editPost, setEditPost] = useState(false);
-  const [editTitle, setEditTitle] = useState('');
-  const [editContent, setEditContent] = useState('');
 
   const handleEdit = async () => {
-    if (!editTitle.trim()) { alert('제목을 입력해주세요!'); return; }
-    if (!editContent.trim()) { alert('내용을 입력해주세요!'); return; }
-
-    const { error } = await supabase
-      .from('posts')
-      .update({ title: editTitle.trim(), content: editContent.trim(), updated_at: new Date().toISOString() })
-      .eq('id', selectedPost.id);
-
-    if (error) { alert('수정 실패했어요.'); return; }
-    alert('수정됐어요! 👍');
-    setEditPost(false);
-    fetchPosts();
-    setSelectedPost({ ...selectedPost, title: editTitle, content: editContent });
+    const res = await api('PATCH', `/posts/${selected.id}`, editForm, token);
+    if (res?.ok) {
+      setEditMode(false);
+      const r = await api('GET', `/posts/${selected.id}`, null, token);
+      if (r) setSelected(await r.json());
+      fetchPosts();
+    }
   };
 
-// 글 상세보기
-  if (selectedPost) {
-    return (
-      <div style={{
-        background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
-        borderRadius: '16px', padding: '24px',
-      }}>
-        <button onClick={() => { setSelectedPost(null); setEditPost(false); }} style={{
-          padding: '6px 16px', borderRadius: '8px',
-          border: '1px solid #4a7c3f', background: 'transparent',
-          color: '#aaa', cursor: 'pointer', fontSize: '0.9rem',
-          fontFamily: "'Jua', sans-serif", marginBottom: '16px',
-        }}>← 목록으로</button>
+  const handleDelete = async (id) => {
+    if (!window.confirm('삭제할까요?')) return;
+    const res = await api('DELETE', `/posts/${id}`, null, token);
+    if (res?.ok) { setSelected(null); fetchPosts(); }
+  };
 
-        <h2 style={{ color: '#f5c842', margin: '0 0 8px' }}>{selectedPost.title}</h2>
-        <p style={{ color: '#888', fontSize: '0.85rem', margin: '0 0 24px' }}>
-          {selectedPost.users?.nickname} · {new Date(selectedPost.created_at).toLocaleDateString('ko-KR')}
-        </p>
-        <div style={{
-          color: '#ddd', fontSize: '1rem', lineHeight: '1.8',
-          borderTop: '1px solid #4a7c3f', paddingTop: '16px', marginBottom: '24px',
-          whiteSpace: 'pre-wrap',
-        }}>
-          {selectedPost.content}
-        </div>
+  const handleComment = async (postId) => {
+    if (!comment.trim()) return;
+    const res = await api('POST', `/posts/${postId}/comments`, { content: comment }, token);
+    if (res?.ok) {
+      setComment('');
+      const r = await api('GET', `/posts/${postId}`, null, token);
+      if (r) setSelected(await r.json());
+    }
+  };
 
-        {(selectedPost.user_id === profile.id || profile.role === 'admin') && (
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-            {selectedPost.user_id === profile.id && (
-              <button onClick={() => {
-                setEditPost(!editPost);
-                setEditTitle(selectedPost.title);
-                setEditContent(selectedPost.content);
-              }} style={{
-                padding: '8px 20px', borderRadius: '8px',
-                border: '1px solid #4a7c3f', background: 'transparent',
-                color: '#4a7c3f', cursor: 'pointer', fontSize: '0.9rem',
-                fontFamily: "'Jua', sans-serif",
-              }}>수정</button>
-            )}
-            <button onClick={() => handleDelete(selectedPost.id)} style={{
-              padding: '8px 20px', borderRadius: '8px',
-              border: '1px solid #ff4444', background: 'transparent',
-              color: '#ff4444', cursor: 'pointer', fontSize: '0.9rem',
-              fontFamily: "'Jua', sans-serif",
-            }}>삭제</button>
-          </div>
-        )}
-        
+  const handleDeleteComment = async (postId, commentId) => {
+    if (!window.confirm('삭제할까요?')) return;
+    const res = await api('DELETE', `/posts/${postId}/comments/${commentId}`, null, token);
+    if (res?.ok) {
+      const r = await api('GET', `/posts/${postId}`, null, token);
+      if (r) setSelected(await r.json());
+    }
+  };
 
-        {editPost && (
-          <div style={{
-            background: 'rgba(74,124,63,0.1)', border: '1px solid #4a7c3f',
-            borderRadius: '12px', padding: '16px', marginBottom: '16px',
-          }}>
-            <input value={editTitle} onChange={e => setEditTitle(e.target.value)} style={{
-              width: '100%', padding: '10px', borderRadius: '8px',
-              border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
-              color: '#fff', fontSize: '1rem', outline: 'none',
-              fontFamily: "'Jua', sans-serif", marginBottom: '8px',
-              boxSizing: 'border-box',
-            }} />
-            <textarea value={editContent} onChange={e => setEditContent(e.target.value)} rows={5} style={{
-              width: '100%', padding: '10px', borderRadius: '8px',
-              border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
-              color: '#fff', fontSize: '0.95rem', outline: 'none',
-              fontFamily: "'Jua', sans-serif", resize: 'vertical',
-              boxSizing: 'border-box',
-            }} />
-            <button onClick={handleEdit} style={{
-              marginTop: '8px', padding: '10px 24px', borderRadius: '8px',
-              border: 'none', background: '#4a7c3f',
-              color: '#fff', cursor: 'pointer', fontSize: '1rem',
-              fontFamily: "'Jua', sans-serif",
-            }}>저장</button>
-          </div>
-        )}
-
-        {/* 댓글 섹션 */}
-        <CommentSection postId={selectedPost.id} profile={profile} />
-      </div>
-    );
-  }
-
-  return (
-    <div style={{
-      background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
-      borderRadius: '16px', padding: '24px',
-    }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-        <h3 style={{ color: '#f5c842', margin: 0, fontSize: '1.2rem' }}>💬 자유게시판</h3>
-        <button onClick={() => setShowWrite(!showWrite)} style={{
-          padding: '8px 16px', borderRadius: '8px',
-          border: '1px solid #4a7c3f', background: showWrite ? 'rgba(74,124,63,0.4)' : 'rgba(74,124,63,0.2)',
-          color: '#fff', cursor: 'pointer', fontSize: '0.9rem',
-          fontFamily: "'Jua', sans-serif",
-        }}>
-          {showWrite ? '▲ 닫기' : '✏️ 글쓰기'}
-        </button>
-      </div>
-
-      {/* 글쓰기 폼 */}
-      {showWrite && (
-        <div style={{
-          background: 'rgba(74,124,63,0.1)', border: '1px solid #4a7c3f',
-          borderRadius: '12px', padding: '16px', marginBottom: '16px',
-        }}>
-          <input
-            placeholder="제목"
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-            style={{
-              width: '100%', padding: '10px', borderRadius: '8px',
-              border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
-              color: '#fff', fontSize: '1rem', outline: 'none',
-              fontFamily: "'Jua', sans-serif", marginBottom: '8px',
-              boxSizing: 'border-box',
-            }}
-          />
-          <textarea
-            placeholder="내용을 입력해주세요..."
-            value={content}
-            onChange={e => setContent(e.target.value)}
-            rows={5}
-            style={{
-              width: '100%', padding: '10px', borderRadius: '8px',
-              border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
-              color: '#fff', fontSize: '0.95rem', outline: 'none',
-              fontFamily: "'Jua', sans-serif", resize: 'vertical',
-              boxSizing: 'border-box',
-            }}
-          />
-          <button onClick={handleWrite} style={{
-            marginTop: '8px', padding: '10px 24px', borderRadius: '8px',
-            border: 'none', background: '#4a7c3f',
-            color: '#fff', cursor: 'pointer', fontSize: '1rem',
-            fontFamily: "'Jua', sans-serif",
-          }}>등록</button>
+  if (selected) return (
+    <div style={cardStyle}>
+      <button onClick={() => { setSelected(null); setEditMode(false); }} style={backBtn}>← 목록으로</button>
+      <h2 style={{ color: '#f5c842', margin: '0 0 8px' }}>{selected.title}</h2>
+      <p style={{ color: '#888', fontSize: '0.85rem', margin: '0 0 16px' }}>{selected.nickname} · {new Date(selected.created_at).toLocaleDateString('ko-KR')}</p>
+      <div style={{ color: '#ddd', lineHeight: '1.8', borderTop: '1px solid #4a7c3f', paddingTop: '16px', whiteSpace: 'pre-wrap', marginBottom: '16px' }}>{selected.content}</div>
+      {(selected.username === profile.username || profile.role === 'admin') && (
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+          {selected.username === profile.username && (
+            <button onClick={() => { setEditMode(!editMode); setEditForm({ title: selected.title, content: selected.content }); }} style={writeBtn}>수정</button>
+          )}
+          <button onClick={() => handleDelete(selected.id)} style={dangerBtn}>삭제</button>
         </div>
       )}
+      {editMode && (
+        <div style={{ ...formStyle, marginBottom: '16px' }}>
+          <input value={editForm.title} onChange={e => setEditForm(p => ({ ...p, title: e.target.value }))} style={inputStyle} />
+          <textarea value={editForm.content} onChange={e => setEditForm(p => ({ ...p, content: e.target.value }))} rows={5} style={{ ...inputStyle, resize: 'vertical' }} />
+          <button onClick={handleEdit} style={submitBtn}>저장</button>
+        </div>
+      )}
+      <CommentSection comments={selected.comments || []} onAdd={() => handleComment(selected.id)} onDelete={(cid) => handleDeleteComment(selected.id, cid)} comment={comment} setComment={setComment} profile={profile} />
+    </div>
+  );
 
-      {/* 글 목록 */}
-      {loading ? (
-        <div style={{ color: '#888', textAlign: 'center', padding: '40px' }}>로딩중...</div>
-      ) : posts.length === 0 ? (
-        <div style={{ color: '#888', textAlign: 'center', padding: '40px' }}>게시글이 없습니다.</div>
-      ) : (
+  return (
+    <div style={cardStyle}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+        <h3 style={{ color: '#f5c842', margin: 0 }}>💬 자유게시판</h3>
+        <button onClick={() => setShowWrite(!showWrite)} style={writeBtn}>{showWrite ? '▲ 닫기' : '✏️ 글쓰기'}</button>
+      </div>
+      {showWrite && (
+        <div style={formStyle}>
+          <input placeholder="제목" value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} style={inputStyle} />
+          <textarea placeholder="내용" value={form.content} onChange={e => setForm(p => ({ ...p, content: e.target.value }))} rows={5} style={{ ...inputStyle, resize: 'vertical' }} />
+          <button onClick={handleWrite} style={submitBtn}>등록</button>
+        </div>
+      )}
+      {loading ? <div style={loadingStyle}>로딩중...</div> : posts.length === 0 ? <div style={emptyStyle}>게시글이 없습니다.</div> : (
         <div>
-          {posts.map((post, i) => (
-            <div
-              key={post.id}
-              onClick={() => setSelectedPost(post)}
-              style={{
-                padding: '14px 16px',
-                borderBottom: i < posts.length - 1 ? '1px solid rgba(74,124,63,0.3)' : 'none',
-                cursor: 'pointer',
-                borderRadius: '8px',
-                transition: 'background 0.15s',
-              }}
+          {posts.map((p, i) => (
+            <div key={p.id} onClick={async () => { const r = await api('GET', `/posts/${p.id}`, null, token); if (r) setSelected(await r.json()); }}
+              style={{ ...listItem, borderBottom: i < posts.length - 1 ? '1px solid rgba(74,124,63,0.3)' : 'none' }}
               onMouseEnter={e => e.currentTarget.style.background = 'rgba(74,124,63,0.1)'}
-              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ color: '#fff', fontSize: '1rem' }}>{post.title}</span>
-                <span style={{ color: '#888', fontSize: '0.8rem' }}>
-                  {new Date(post.created_at).toLocaleDateString('ko-KR')}
-                </span>
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: '#fff' }}>{p.title} <span style={{ color: '#888', fontSize: '0.8rem' }}>({p.comment_count})</span></span>
+                <span style={{ color: '#888', fontSize: '0.8rem' }}>{new Date(p.created_at).toLocaleDateString('ko-KR')}</span>
               </div>
-              <span style={{ color: '#aaa', fontSize: '0.85rem' }}>{post.users?.nickname}</span>
+              <span style={{ color: '#aaa', fontSize: '0.85rem' }}>{p.nickname}</span>
             </div>
           ))}
         </div>
@@ -1431,286 +612,100 @@ function BoardTab({ profile }) {
   );
 }
 
-// 공지사항 탭
-function NoticeTab({ profile }) {
+// ── 공지사항 탭 ──────────────────────────────────────────
+function NoticeTab({ profile, token }) {
   const [notices, setNotices] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
   const [showWrite, setShowWrite] = useState(false);
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
-  const [importance, setImportance] = useState('normal');
-  const [isPinned, setIsPinned] = useState(false);
-  const [selectedNotice, setSelectedNotice] = useState(null);
+  const [form, setForm] = useState({ title: '', content: '', importance: 'normal', is_pinned: false });
   const isAdmin = profile?.role === 'admin';
-  const [likes, setLikes] = useState(0);
-  const [dislikes, setDislikes] = useState(0);
-  const [myReaction, setMyReaction] = useState(null);
 
-  useEffect(() => {
-    fetchNotices();
-  }, []);
-
-  const fetchNotices = async () => {
-    const { data } = await supabase
-      .from('notices')
-      .select('*, users(nickname)')
-      .order('is_pinned', { ascending: false })
-      .order('created_at', { ascending: false });
-    setNotices(data || []);
+  const fetchNotices = useCallback(async () => {
+    const res = await api('GET', '/notices', null, token);
+    if (!res) return;
+    const data = await res.json();
+    setNotices(data.items || []);
     setLoading(false);
-  };
+  }, [token]);
+
+  useEffect(() => { fetchNotices(); }, [fetchNotices]);
 
   const handleWrite = async () => {
-    if (!title.trim()) { alert('제목을 입력해주세요!'); return; }
-    if (!content.trim()) { alert('내용을 입력해주세요!'); return; }
-
-    const { data: { user } } = await supabase.auth.getUser();
-    const { error } = await supabase.from('notices').insert({
-      user_id: user.id,
-      title: title.trim(),
-      content: content.trim(),
-      importance,
-      is_pinned: isPinned,
-    });
-
-    if (error) { alert('작성 실패했어요.'); return; }
-    setTitle(''); setContent(''); setImportance('normal'); setIsPinned(false);
-    setShowWrite(false);
-    fetchNotices();
+    const res = await api('POST', '/notices', form, token);
+    if (res?.ok) { setForm({ title: '', content: '', importance: 'normal', is_pinned: false }); setShowWrite(false); fetchNotices(); }
+    else { const d = await res.json(); alert(d.detail || '작성 실패'); }
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('정말 삭제할까요?')) return;
-    await supabase.from('notices').delete().eq('id', id);
-    setSelectedNotice(null);
-    fetchNotices();
-  };
-  
-  const fetchReactions = async (noticeId) => {
-    const { data } = await supabase
-      .from('notice_reactions')
-      .select('*')
-      .eq('notice_id', noticeId);
-  
-    if (data) {
-      setLikes(data.filter(r => r.reaction === 'like').length);
-      setDislikes(data.filter(r => r.reaction === 'dislike').length);
-      const { data: { session } } = await supabase.auth.getSession();
-      const mine = data.find(r => r.user_id === session?.user?.id);
-      setMyReaction(mine?.reaction || null);
-    }
+    if (!window.confirm('삭제할까요?')) return;
+    const res = await api('DELETE', `/notices/${id}`, null, token);
+    if (res?.ok) { setSelected(null); fetchNotices(); }
   };
 
-  const handleReaction = async (type) => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return;
-
-    if (myReaction === type) {
-      await supabase.from('notice_reactions')
-        .delete()
-        .eq('notice_id', selectedNotice.id)
-        .eq('user_id', session.user.id);
-    } else {
-      await supabase.from('notice_reactions').upsert({
-        notice_id: selectedNotice.id,
-        user_id: session.user.id,
-        reaction: type,
-      });
-    }
-    fetchReactions(selectedNotice.id);
+  const handleReaction = async (noticeId, reaction) => {
+    await api('POST', `/notices/${noticeId}/reactions`, { reaction }, token);
+    const r = await api('GET', `/notices/${noticeId}`, null, token);
+    if (r) setSelected(await r.json());
   };
 
-  const importanceColor = (imp) => {
-    if (imp === 'urgent') return '#ff4444';
-    if (imp === 'important') return '#f5c842';
-    return '#aaa';
-  };
+  const importanceColor = (imp) => imp === 'urgent' ? '#ff4444' : imp === 'important' ? '#f5c842' : '#aaa';
+  const importanceLabel = (imp) => imp === 'urgent' ? '🚨 긴급' : imp === 'important' ? '⚠️ 중요' : '📢 일반';
 
-  const importanceLabel = (imp) => {
-    if (imp === 'urgent') return '🚨 긴급';
-    if (imp === 'important') return '⚠️ 중요';
-    return '📢 일반';
-  };
-  
-  useEffect(() => {
-    if (selectedNotice) fetchReactions(selectedNotice.id);
-  }, [selectedNotice]);
-
-  if (selectedNotice) {
-    return (
-      <div style={{
-        background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
-        borderRadius: '16px', padding: '24px',
-      }}>
-        <button onClick={() => setSelectedNotice(null)} style={{
-          padding: '6px 16px', borderRadius: '8px',
-          border: '1px solid #4a7c3f', background: 'transparent',
-          color: '#aaa', cursor: 'pointer', fontSize: '0.9rem',
-          fontFamily: "'Jua', sans-serif", marginBottom: '16px',
-        }}>← 목록으로</button>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-          <span style={{ color: importanceColor(selectedNotice.importance), fontSize: '0.9rem' }}>
-            {importanceLabel(selectedNotice.importance)}
-          </span>
-          {selectedNotice.is_pinned && <span style={{ color: '#f5c842', fontSize: '0.9rem' }}>📌 고정</span>}
-          <h2 style={{ color: '#f5c842', margin: 0 }}>{selectedNotice.title}</h2>
-        </div>
-        <p style={{ color: '#888', fontSize: '0.85rem', margin: '0 0 24px' }}>
-          {new Date(selectedNotice.created_at).toLocaleDateString('ko-KR')}
-        </p>
-        <div style={{
-          color: '#ddd', fontSize: '1rem', lineHeight: '1.8',
-          borderTop: '1px solid #4a7c3f', paddingTop: '16px',
-          whiteSpace: 'pre-wrap',
-        }}>
-          {selectedNotice.content}
-        </div>
-
-        {isAdmin && (
-          <button onClick={() => handleDelete(selectedNotice.id)} style={{
-            marginTop: '24px', padding: '8px 20px', borderRadius: '8px',
-            border: '1px solid #ff4444', background: 'transparent',
-            color: '#ff4444', cursor: 'pointer', fontSize: '0.9rem',
-            fontFamily: "'Jua', sans-serif",
-          }}>삭제</button>
-        )}
-
-        {/* 좋아요/싫어요 */}
-        <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
-        <button onClick={() => handleReaction('like')} style={{
-            padding: '8px 20px', borderRadius: '8px',
-            border: `1px solid ${myReaction === 'like' ? '#4cff72' : '#4a7c3f'}`,
-            background: myReaction === 'like' ? 'rgba(76,255,114,0.2)' : 'transparent',
-            color: myReaction === 'like' ? '#4cff72' : '#aaa',
-            cursor: 'pointer', fontSize: '0.9rem',
-            fontFamily: "'Jua', sans-serif",
-        }}>👍 {likes}</button>
-        <button onClick={() => handleReaction('dislike')} style={{
-            padding: '8px 20px', borderRadius: '8px',
-            border: `1px solid ${myReaction === 'dislike' ? '#ff4444' : '#4a7c3f'}`,
-            background: myReaction === 'dislike' ? 'rgba(255,68,68,0.2)' : 'transparent',
-            color: myReaction === 'dislike' ? '#ff4444' : '#aaa',
-            cursor: 'pointer', fontSize: '0.9rem',
-            fontFamily: "'Jua', sans-serif",
-        }}>👎 {dislikes}</button>
-        </div>
+  if (selected) return (
+    <div style={cardStyle}>
+      <button onClick={() => setSelected(null)} style={backBtn}>← 목록으로</button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+        <span style={{ color: importanceColor(selected.importance), fontSize: '0.9rem' }}>{importanceLabel(selected.importance)}</span>
+        {selected.is_pinned && <span style={{ color: '#f5c842' }}>📌</span>}
+        <h2 style={{ color: '#f5c842', margin: 0 }}>{selected.title}</h2>
       </div>
-    );
-  }
+      <p style={{ color: '#888', fontSize: '0.85rem', margin: '0 0 16px' }}>{new Date(selected.created_at).toLocaleDateString('ko-KR')}</p>
+      <div style={{ color: '#ddd', lineHeight: '1.8', borderTop: '1px solid #4a7c3f', paddingTop: '16px', whiteSpace: 'pre-wrap', marginBottom: '16px' }}>{selected.content}</div>
+      <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+        <button onClick={() => handleReaction(selected.id, 'like')} style={{ ...writeBtn }}>👍 {selected.likes || 0}</button>
+        <button onClick={() => handleReaction(selected.id, 'dislike')} style={{ ...writeBtn }}>👎 {selected.dislikes || 0}</button>
+      </div>
+      {isAdmin && <button onClick={() => handleDelete(selected.id)} style={dangerBtn}>삭제</button>}
+    </div>
+  );
 
   return (
-    <div style={{
-      background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
-      borderRadius: '16px', padding: '24px',
-    }}>
+    <div style={cardStyle}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-        <h3 style={{ color: '#f5c842', margin: 0, fontSize: '1.2rem' }}>📢 공지사항</h3>
-        {isAdmin && (
-          <button onClick={() => setShowWrite(!showWrite)} style={{
-            padding: '8px 16px', borderRadius: '8px',
-            border: '1px solid #4a7c3f', background: showWrite ? 'rgba(74,124,63,0.4)' : 'rgba(74,124,63,0.2)',
-            color: '#fff', cursor: 'pointer', fontSize: '0.9rem',
-            fontFamily: "'Jua', sans-serif",
-          }}>
-            {showWrite ? '▲ 닫기' : '✏️ 작성'}
-          </button>
-        )}
+        <h3 style={{ color: '#f5c842', margin: 0 }}>📢 공지사항</h3>
+        {isAdmin && <button onClick={() => setShowWrite(!showWrite)} style={writeBtn}>{showWrite ? '▲ 닫기' : '✏️ 작성'}</button>}
       </div>
-
       {isAdmin && showWrite && (
-        <div style={{
-          background: 'rgba(74,124,63,0.1)', border: '1px solid #4a7c3f',
-          borderRadius: '12px', padding: '16px', marginBottom: '16px',
-        }}>
-          <input
-            placeholder="제목"
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-            style={{
-              width: '100%', padding: '10px', borderRadius: '8px',
-              border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
-              color: '#fff', fontSize: '1rem', outline: 'none',
-              fontFamily: "'Jua', sans-serif", marginBottom: '8px',
-              boxSizing: 'border-box',
-            }}
-          />
-          <textarea
-            placeholder="내용을 입력해주세요..."
-            value={content}
-            onChange={e => setContent(e.target.value)}
-            rows={6}
-            style={{
-              width: '100%', padding: '10px', borderRadius: '8px',
-              border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
-              color: '#fff', fontSize: '0.95rem', outline: 'none',
-              fontFamily: "'Jua', sans-serif", resize: 'vertical',
-              boxSizing: 'border-box', marginBottom: '8px',
-            }}
-          />
-          <div style={{ display: 'flex', gap: '12px', marginBottom: '8px', alignItems: 'center' }}>
-            <select
-              value={importance}
-              onChange={e => setImportance(e.target.value)}
-              style={{
-                padding: '8px', borderRadius: '8px',
-                border: '1px solid #4a7c3f', background: 'rgba(0,0,0,0.5)',
-                color: '#fff', fontSize: '0.9rem', outline: 'none',
-                fontFamily: "'Jua', sans-serif",
-              }}
-            >
-              <option value="normal">📢 일반</option>
-              <option value="important">⚠️ 중요</option>
-              <option value="urgent">🚨 긴급</option>
-            </select>
-            <label style={{ color: '#aaa', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={isPinned}
-                onChange={e => setIsPinned(e.target.checked)}
-              />
-              📌 상단 고정
-            </label>
-          </div>
-          <button onClick={handleWrite} style={{
-            padding: '10px 24px', borderRadius: '8px',
-            border: 'none', background: '#4a7c3f',
-            color: '#fff', cursor: 'pointer', fontSize: '1rem',
-            fontFamily: "'Jua', sans-serif",
-          }}>등록</button>
+        <div style={formStyle}>
+          <input placeholder="제목" value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} style={inputStyle} />
+          <textarea placeholder="내용" value={form.content} onChange={e => setForm(p => ({ ...p, content: e.target.value }))} rows={5} style={{ ...inputStyle, resize: 'vertical' }} />
+          <select value={form.importance} onChange={e => setForm(p => ({ ...p, importance: e.target.value }))} style={{ ...inputStyle, background: 'rgba(0,0,0,0.5)' }}>
+            <option value="normal">📢 일반</option>
+            <option value="important">⚠️ 중요</option>
+            <option value="urgent">🚨 긴급</option>
+          </select>
+          <label style={{ color: '#aaa', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+            <input type="checkbox" checked={form.is_pinned} onChange={e => setForm(p => ({ ...p, is_pinned: e.target.checked }))} />
+            📌 상단 고정
+          </label>
+          <button onClick={handleWrite} style={submitBtn}>등록</button>
         </div>
       )}
-
-      {loading ? (
-        <div style={{ color: '#888', textAlign: 'center', padding: '40px' }}>로딩중...</div>
-      ) : notices.length === 0 ? (
-        <div style={{ color: '#888', textAlign: 'center', padding: '40px' }}>공지사항이 없습니다.</div>
-      ) : (
+      {loading ? <div style={loadingStyle}>로딩중...</div> : notices.length === 0 ? <div style={emptyStyle}>공지사항이 없습니다.</div> : (
         <div>
-          {notices.map((notice, i) => (
-            <div
-              key={notice.id}
-              onClick={() => setSelectedNotice(notice)}
-              style={{
-                padding: '14px 16px',
-                borderBottom: i < notices.length - 1 ? '1px solid rgba(74,124,63,0.3)' : 'none',
-                cursor: 'pointer', borderRadius: '8px', transition: 'background 0.15s',
-                background: notice.is_pinned ? 'rgba(245,200,66,0.05)' : 'transparent',
-              }}
+          {notices.map((n, i) => (
+            <div key={n.id} onClick={async () => { const r = await api('GET', `/notices/${n.id}`, null, token); if (r) setSelected(await r.json()); }}
+              style={{ ...listItem, borderBottom: i < notices.length - 1 ? '1px solid rgba(74,124,63,0.3)' : 'none', background: n.is_pinned ? 'rgba(245,200,66,0.05)' : 'transparent' }}
               onMouseEnter={e => e.currentTarget.style.background = 'rgba(74,124,63,0.1)'}
-              onMouseLeave={e => e.currentTarget.style.background = notice.is_pinned ? 'rgba(245,200,66,0.05)' : 'transparent'}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              onMouseLeave={e => e.currentTarget.style.background = n.is_pinned ? 'rgba(245,200,66,0.05)' : 'transparent'}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  {notice.is_pinned && <span style={{ fontSize: '0.8rem' }}>📌</span>}
-                  <span style={{ color: importanceColor(notice.importance), fontSize: '0.8rem' }}>
-                    {importanceLabel(notice.importance)}
-                  </span>
-                  <span style={{ color: '#fff', fontSize: '1rem' }}>{notice.title}</span>
+                  {n.is_pinned && <span>📌</span>}
+                  <span style={{ color: importanceColor(n.importance), fontSize: '0.8rem' }}>{importanceLabel(n.importance)}</span>
+                  <span style={{ color: '#fff' }}>{n.title}</span>
                 </div>
-                <span style={{ color: '#888', fontSize: '0.8rem' }}>
-                  {new Date(notice.created_at).toLocaleDateString('ko-KR')}
-                </span>
+                <span style={{ color: '#888', fontSize: '0.8rem' }}>{new Date(n.created_at).toLocaleDateString('ko-KR')}</span>
               </div>
             </div>
           ))}
@@ -1720,606 +715,223 @@ function NoticeTab({ profile }) {
   );
 }
 
-// 이벤트 탭 (임시)
-function EventTab({ profile }) {
+// ── 이벤트 탭 ────────────────────────────────────────────
+function EventTab({ profile, token }) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
   const [showWrite, setShowWrite] = useState(false);
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [selectedEvent, setSelectedEvent] = useState(null);
+  const [form, setForm] = useState({ title: '', content: '', start_date: '', end_date: '' });
   const isAdmin = profile?.role === 'admin';
 
-  useEffect(() => {
-    fetchEvents();
-  }, []);
-
-  const fetchEvents = async () => {
-    const { data } = await supabase
-      .from('events')
-      .select('*, users(nickname)')
-      .order('created_at', { ascending: false });
-    setEvents(data || []);
+  const fetchEvents = useCallback(async () => {
+    const res = await api('GET', '/events', null, token);
+    if (!res) return;
+    const data = await res.json();
+    setEvents(data.items || []);
     setLoading(false);
-  };
+  }, [token]);
+
+  useEffect(() => { fetchEvents(); }, [fetchEvents]);
 
   const handleWrite = async () => {
-    if (!title.trim()) { alert('제목을 입력해주세요!'); return; }
-    if (!content.trim()) { alert('내용을 입력해주세요!'); return; }
-    if (!startDate) { alert('시작일을 입력해주세요!'); return; }
-    if (!endDate) { alert('종료일을 입력해주세요!'); return; }
-
-    const { data: { user } } = await supabase.auth.getUser();
-    const { error } = await supabase.from('events').insert({
-      user_id: user.id,
-      title: title.trim(),
-      content: content.trim(),
-      start_date: new Date(startDate).toISOString(),
-      end_date: new Date(endDate).toISOString(),
-    });
-
-    if (error) { alert('작성 실패했어요.'); return; }
-    setTitle(''); setContent(''); setStartDate(''); setEndDate('');
-    setShowWrite(false);
-    fetchEvents();
+    const res = await api('POST', '/events', form, token);
+    if (res?.ok) { setForm({ title: '', content: '', start_date: '', end_date: '' }); setShowWrite(false); fetchEvents(); }
+    else { const d = await res.json(); alert(d.detail || '작성 실패'); }
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('정말 삭제할까요?')) return;
-    await supabase.from('events').delete().eq('id', id);
-    setSelectedEvent(null);
-    fetchEvents();
+    if (!window.confirm('삭제할까요?')) return;
+    const res = await api('DELETE', `/events/${id}`, null, token);
+    if (res?.ok) { setSelected(null); fetchEvents(); }
   };
 
-  const getStatus = (event) => {
-    const now = new Date();
-    const start = new Date(event.start_date);
-    const end = new Date(event.end_date);
-    if (now < start) return { label: '예정', color: '#7ae8ff' };
-    if (now > end) return { label: '종료', color: '#888' };
-    return { label: '진행중', color: '#4cff72' };
-  };
+  const statusColor = (s) => s === '진행중' ? '#4cff72' : s === '예정' ? '#7ae8ff' : '#888';
 
-  if (selectedEvent) {
-    const status = getStatus(selectedEvent);
-    return (
-      <div style={{
-        background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
-        borderRadius: '16px', padding: '24px',
-      }}>
-        <button onClick={() => setSelectedEvent(null)} style={{
-          padding: '6px 16px', borderRadius: '8px',
-          border: '1px solid #4a7c3f', background: 'transparent',
-          color: '#aaa', cursor: 'pointer', fontSize: '0.9rem',
-          fontFamily: "'Jua', sans-serif", marginBottom: '16px',
-        }}>← 목록으로</button>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-          <span style={{
-            background: `${status.color}22`, border: `1px solid ${status.color}`,
-            borderRadius: '6px', padding: '2px 10px', color: status.color, fontSize: '0.85rem',
-          }}>{status.label}</span>
-          <h2 style={{ color: '#f5c842', margin: 0 }}>{selectedEvent.title}</h2>
-        </div>
-        <p style={{ color: '#888', fontSize: '0.85rem', margin: '0 0 8px' }}>
-          📅 {new Date(selectedEvent.start_date).toLocaleDateString('ko-KR')} ~ {new Date(selectedEvent.end_date).toLocaleDateString('ko-KR')}
-        </p>
-        <div style={{
-          color: '#ddd', fontSize: '1rem', lineHeight: '1.8',
-          borderTop: '1px solid #4a7c3f', paddingTop: '16px',
-          whiteSpace: 'pre-wrap',
-        }}>
-          {selectedEvent.content}
-        </div>
-
-        {isAdmin && (
-          <button onClick={() => handleDelete(selectedEvent.id)} style={{
-            marginTop: '24px', padding: '8px 20px', borderRadius: '8px',
-            border: '1px solid #ff4444', background: 'transparent',
-            color: '#ff4444', cursor: 'pointer', fontSize: '0.9rem',
-            fontFamily: "'Jua', sans-serif",
-          }}>삭제</button>
-        )}
+  if (selected) return (
+    <div style={cardStyle}>
+      <button onClick={() => setSelected(null)} style={backBtn}>← 목록으로</button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+        <span style={{ background: `${statusColor(selected.status)}22`, border: `1px solid ${statusColor(selected.status)}`, borderRadius: '6px', padding: '2px 10px', color: statusColor(selected.status), fontSize: '0.85rem' }}>{selected.status}</span>
+        <h2 style={{ color: '#f5c842', margin: 0 }}>{selected.title}</h2>
       </div>
-    );
-  }
+      <p style={{ color: '#888', fontSize: '0.85rem', margin: '0 0 16px' }}>
+        📅 {new Date(selected.start_date).toLocaleDateString('ko-KR')} ~ {new Date(selected.end_date).toLocaleDateString('ko-KR')}
+      </p>
+      <div style={{ color: '#ddd', lineHeight: '1.8', borderTop: '1px solid #4a7c3f', paddingTop: '16px', whiteSpace: 'pre-wrap' }}>{selected.content}</div>
+      {isAdmin && <button onClick={() => handleDelete(selected.id)} style={{ ...dangerBtn, marginTop: '16px' }}>삭제</button>}
+    </div>
+  );
 
   return (
-    <div style={{
-      background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
-      borderRadius: '16px', padding: '24px',
-    }}>
+    <div style={cardStyle}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-        <h3 style={{ color: '#f5c842', margin: 0, fontSize: '1.2rem' }}>🎉 이벤트</h3>
-        {isAdmin && (
-          <button onClick={() => setShowWrite(!showWrite)} style={{
-            padding: '8px 16px', borderRadius: '8px',
-            border: '1px solid #4a7c3f', background: showWrite ? 'rgba(74,124,63,0.4)' : 'rgba(74,124,63,0.2)',
-            color: '#fff', cursor: 'pointer', fontSize: '0.9rem',
-            fontFamily: "'Jua', sans-serif",
-          }}>
-            {showWrite ? '▲ 닫기' : '✏️ 작성'}
-          </button>
-        )}
+        <h3 style={{ color: '#f5c842', margin: 0 }}>🎉 이벤트</h3>
+        {isAdmin && <button onClick={() => setShowWrite(!showWrite)} style={writeBtn}>{showWrite ? '▲ 닫기' : '✏️ 작성'}</button>}
       </div>
-
       {isAdmin && showWrite && (
-        <div style={{
-          background: 'rgba(74,124,63,0.1)', border: '1px solid #4a7c3f',
-          borderRadius: '12px', padding: '16px', marginBottom: '16px',
-        }}>
-          <input
-            placeholder="제목"
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-            style={{
-              width: '100%', padding: '10px', borderRadius: '8px',
-              border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
-              color: '#fff', fontSize: '1rem', outline: 'none',
-              fontFamily: "'Jua', sans-serif", marginBottom: '8px',
-              boxSizing: 'border-box',
-            }}
-          />
-          <textarea
-            placeholder="내용을 입력해주세요..."
-            value={content}
-            onChange={e => setContent(e.target.value)}
-            rows={6}
-            style={{
-              width: '100%', padding: '10px', borderRadius: '8px',
-              border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
-              color: '#fff', fontSize: '0.95rem', outline: 'none',
-              fontFamily: "'Jua', sans-serif", resize: 'vertical',
-              boxSizing: 'border-box', marginBottom: '8px',
-            }}
-          />
-          <div style={{ display: 'flex', gap: '12px', marginBottom: '8px' }}>
+        <div style={formStyle}>
+          <input placeholder="제목" value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} style={inputStyle} />
+          <textarea placeholder="내용" value={form.content} onChange={e => setForm(p => ({ ...p, content: e.target.value }))} rows={5} style={{ ...inputStyle, resize: 'vertical' }} />
+          <div style={{ display: 'flex', gap: '8px' }}>
             <div style={{ flex: 1 }}>
               <p style={{ color: '#aaa', fontSize: '0.85rem', margin: '0 0 4px' }}>시작일</p>
-              <input
-                type="datetime-local"
-                value={startDate}
-                onChange={e => setStartDate(e.target.value)}
-                style={{
-                    width: '100%', padding: '8px', borderRadius: '8px',
-                    border: '1px solid #4a7c3f', background: 'rgba(0,0,0,0.5)',
-                    color: '#fff', fontSize: '0.9rem', outline: 'none',
-                    fontFamily: "'Jua', sans-serif", boxSizing: 'border-box',
-                    colorScheme: 'dark', 
-                }}
-              />
+              <input type="datetime-local" value={form.start_date} onChange={e => setForm(p => ({ ...p, start_date: e.target.value }))} style={{ ...inputStyle, colorScheme: 'dark', width: '100%', boxSizing: 'border-box' }} />
             </div>
             <div style={{ flex: 1 }}>
               <p style={{ color: '#aaa', fontSize: '0.85rem', margin: '0 0 4px' }}>종료일</p>
-              <input
-                type="datetime-local"
-                value={endDate}
-                onChange={e => setEndDate(e.target.value)}
-                style={{
-                    width: '100%', padding: '8px', borderRadius: '8px',
-                    border: '1px solid #4a7c3f', background: 'rgba(0,0,0,0.5)',
-                    color: '#fff', fontSize: '0.9rem', outline: 'none',
-                    fontFamily: "'Jua', sans-serif", boxSizing: 'border-box',
-                    colorScheme: 'dark',  // ← 이거 추가!
-                }}
-              />
+              <input type="datetime-local" value={form.end_date} onChange={e => setForm(p => ({ ...p, end_date: e.target.value }))} style={{ ...inputStyle, colorScheme: 'dark', width: '100%', boxSizing: 'border-box' }} />
             </div>
           </div>
-          <button onClick={handleWrite} style={{
-            padding: '10px 24px', borderRadius: '8px',
-            border: 'none', background: '#4a7c3f',
-            color: '#fff', cursor: 'pointer', fontSize: '1rem',
-            fontFamily: "'Jua', sans-serif",
-          }}>등록</button>
+          <button onClick={handleWrite} style={submitBtn}>등록</button>
         </div>
       )}
-
-      {loading ? (
-        <div style={{ color: '#888', textAlign: 'center', padding: '40px' }}>로딩중...</div>
-      ) : events.length === 0 ? (
-        <div style={{ color: '#888', textAlign: 'center', padding: '40px' }}>이벤트가 없습니다.</div>
-      ) : (
+      {loading ? <div style={loadingStyle}>로딩중...</div> : events.length === 0 ? <div style={emptyStyle}>이벤트가 없습니다.</div> : (
         <div>
-          {events.map((event, i) => {
-            const status = getStatus(event);
-            return (
-              <div
-                key={event.id}
-                onClick={() => setSelectedEvent(event)}
-                style={{
-                  padding: '14px 16px',
-                  borderBottom: i < events.length - 1 ? '1px solid rgba(74,124,63,0.3)' : 'none',
-                  cursor: 'pointer', borderRadius: '8px', transition: 'background 0.15s',
-                }}
-                onMouseEnter={e => e.currentTarget.style.background = 'rgba(74,124,63,0.1)'}
-                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{
-                      background: `${status.color}22`, border: `1px solid ${status.color}`,
-                      borderRadius: '6px', padding: '2px 8px', color: status.color, fontSize: '0.8rem',
-                    }}>{status.label}</span>
-                    <span style={{ color: '#fff', fontSize: '1rem' }}>{event.title}</span>
-                  </div>
-                  <span style={{ color: '#888', fontSize: '0.8rem' }}>
-                    {new Date(event.end_date).toLocaleDateString('ko-KR')} 까지
-                  </span>
+          {events.map((e, i) => (
+            <div key={e.id} onClick={async () => { const r = await api('GET', `/events/${e.id}`, null, token); if (r) setSelected(await r.json()); }}
+              style={{ ...listItem, borderBottom: i < events.length - 1 ? '1px solid rgba(74,124,63,0.3)' : 'none' }}
+              onMouseEnter={el => el.currentTarget.style.background = 'rgba(74,124,63,0.1)'}
+              onMouseLeave={el => el.currentTarget.style.background = 'transparent'}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ background: `${statusColor(e.status)}22`, border: `1px solid ${statusColor(e.status)}`, borderRadius: '6px', padding: '2px 8px', color: statusColor(e.status), fontSize: '0.8rem' }}>{e.status}</span>
+                  <span style={{ color: '#fff' }}>{e.title}</span>
                 </div>
+                <span style={{ color: '#888', fontSize: '0.8rem' }}>{new Date(e.end_date).toLocaleDateString('ko-KR')} 까지</span>
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-// 1:1 문의 탭 (임시)
-function InquiryTab({ profile }) {
+// ── 문의 탭 ──────────────────────────────────────────────
+function InquiryTab({ profile, token }) {
   const [inquiries, setInquiries] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
   const [showWrite, setShowWrite] = useState(false);
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
-  const [password, setPassword] = useState('');
-  const [isSecret, setIsSecret] = useState(false);
-  const [selectedInquiry, setSelectedInquiry] = useState(null);
-  const [passwordInput, setPasswordInput] = useState('');
-  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [form, setForm] = useState({ title: '', content: '' });
+  const [chatMsg, setChatMsg] = useState('');
   const [answer, setAnswer] = useState('');
   const [showAnswer, setShowAnswer] = useState(false);
   const isAdmin = profile?.role === 'admin';
 
-  useEffect(() => {
-    fetchInquiries();
-  }, []);
-
-  const fetchInquiries = async () => {
-    const { data } = await supabase
-      .from('inquiries')
-      .select('*, users(nickname)')
-      .order('created_at', { ascending: false });
-    setInquiries(data || []);
+  const fetchInquiries = useCallback(async () => {
+    const res = await api('GET', '/inquiries', null, token);
+    if (!res) return;
+    const data = await res.json();
+    setInquiries(data.items || []);
     setLoading(false);
-  };
+  }, [token]);
+
+  useEffect(() => { fetchInquiries(); }, [fetchInquiries]);
 
   const handleWrite = async () => {
-    if (!title.trim()) { alert('제목을 입력해주세요!'); return; }
-    if (!content.trim()) { alert('내용을 입력해주세요!'); return; }
-    if (isSecret && !password.trim()) { alert('비밀번호를 입력해주세요!'); return; }
-
-    const { data: { user } } = await supabase.auth.getUser();
-    const { error } = await supabase.from('inquiries').insert({
-      user_id: user.id,
-      title: title.trim(),
-      content: content.trim(),
-      password: isSecret ? password.trim() : null,
-      is_secret: isSecret,
-    });
-
-    if (error) { alert('작성 실패했어요.'); return; }
-    setTitle(''); setContent(''); setPassword(''); setIsSecret(false);
-    setShowWrite(false);
-    fetchInquiries();
-  };
-
-  const handleDelete = async (id) => {
-    if (!window.confirm('정말 삭제할까요?')) return;
-    await supabase.from('inquiries').delete().eq('id', id);
-    setSelectedInquiry(null);
-    fetchInquiries();
-  };
-
-  const handleClickInquiry = (inquiry) => {
-    // 본인 글이거나 관리자면 바로 열기
-    if (inquiry.user_id === profile.id || isAdmin) {
-      setSelectedInquiry(inquiry);
-      return;
-    }
-    // 비밀글이면 비밀번호 입력
-    if (inquiry.is_secret) {
-      setSelectedInquiry(inquiry);
-      setShowPasswordModal(true);
-      return;
-    }
-    setSelectedInquiry(inquiry);
-  };
-
-  const handlePasswordCheck = () => {
-    if (passwordInput === selectedInquiry.password) {
-      setShowPasswordModal(false);
-      setPasswordInput('');
-    } else {
-      alert('비밀번호가 틀렸어요!');
-    }
+    const res = await api('POST', '/inquiries', form, token);
+    if (res?.ok) { setForm({ title: '', content: '' }); setShowWrite(false); fetchInquiries(); }
+    else { const d = await res.json(); alert(d.detail || '작성 실패'); }
   };
 
   const handleAnswer = async () => {
-    if (!answer.trim()) { alert('답변을 입력해주세요!'); return; }
-    const { error } = await supabase
-      .from('inquiries')
-      .update({
-        answer: answer.trim(),
-        status: '답변완료',
-        answered_at: new Date().toISOString(),
-      })
-      .eq('id', selectedInquiry.id);
-
-    if (error) { alert('답변 실패했어요.'); return; }
-    alert('답변이 등록됐어요! 👍');
-    setAnswer('');
-    setShowAnswer(false);
-    fetchInquiries();
-    setSelectedInquiry({
-         ...selectedInquiry, 
-         answer: answer, 
-         status: '답변완료',
-         answered_at: new Date().toISOString(),
-       });
+    const res = await api('PATCH', `/inquiries/${selected.id}/answer`, { answer }, token);
+    if (res?.ok) {
+      setAnswer(''); setShowAnswer(false);
+      const r = await api('GET', `/inquiries/${selected.id}`, null, token);
+      if (r) setSelected(await r.json());
+      fetchInquiries();
+    }
   };
 
-  // 비밀번호 모달
-  if (showPasswordModal) {
-    return (
-      <div style={{
-        background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
-        borderRadius: '16px', padding: '24px', maxWidth: '400px', margin: '0 auto',
-      }}>
-        <h3 style={{ color: '#f5c842', margin: '0 0 16px' }}>🔒 비밀글입니다</h3>
-        <p style={{ color: '#aaa', fontSize: '0.9rem', marginBottom: '16px' }}>비밀번호를 입력해주세요</p>
-        <input
-          type="password"
-          placeholder="비밀번호"
-          value={passwordInput}
-          onChange={e => setPasswordInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handlePasswordCheck()}
-          style={{
-            width: '100%', padding: '10px', borderRadius: '8px',
-            border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
-            color: '#fff', fontSize: '1rem', outline: 'none',
-            fontFamily: "'Jua', sans-serif", marginBottom: '12px',
-            boxSizing: 'border-box',
-          }}
-        />
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <button onClick={handlePasswordCheck} style={{
-            flex: 1, padding: '10px', borderRadius: '8px',
-            border: 'none', background: '#4a7c3f',
-            color: '#fff', cursor: 'pointer', fontSize: '1rem',
-            fontFamily: "'Jua', sans-serif",
-          }}>확인</button>
-          <button onClick={() => { setShowPasswordModal(false); setSelectedInquiry(null); setPasswordInput(''); }} style={{
-            flex: 1, padding: '10px', borderRadius: '8px',
-            border: '1px solid #4a7c3f', background: 'transparent',
-            color: '#aaa', cursor: 'pointer', fontSize: '1rem',
-            fontFamily: "'Jua', sans-serif",
-          }}>취소</button>
-        </div>
+  const handleChat = async () => {
+    if (!chatMsg.trim()) return;
+    const res = await api('POST', `/inquiries/${selected.id}/chat`, { message: chatMsg }, token);
+    if (res?.ok) {
+      setChatMsg('');
+      const r = await api('GET', `/inquiries/${selected.id}`, null, token);
+      if (r) setSelected(await r.json());
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('삭제할까요?')) return;
+    const res = await api('DELETE', `/inquiries/${id}`, null, token);
+    if (res?.ok) { setSelected(null); fetchInquiries(); }
+  };
+
+  if (selected) return (
+    <div style={cardStyle}>
+      <button onClick={() => { setSelected(null); setShowAnswer(false); }} style={backBtn}>← 목록으로</button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+        <span style={{
+          background: selected.status === '답변완료' ? 'rgba(76,255,114,0.2)' : 'rgba(245,200,66,0.2)',
+          border: `1px solid ${selected.status === '답변완료' ? '#4cff72' : '#f5c842'}`,
+          borderRadius: '6px', padding: '2px 10px',
+          color: selected.status === '답변완료' ? '#4cff72' : '#f5c842', fontSize: '0.85rem',
+        }}>{selected.status}</span>
+        <h2 style={{ color: '#f5c842', margin: 0 }}>{selected.title}</h2>
       </div>
-    );
-  }
+      <p style={{ color: '#888', fontSize: '0.85rem', margin: '0 0 16px' }}>{new Date(selected.created_at).toLocaleDateString('ko-KR')}</p>
+      <div style={{ color: '#ddd', lineHeight: '1.8', borderTop: '1px solid #4a7c3f', paddingTop: '16px', whiteSpace: 'pre-wrap', marginBottom: '16px' }}>{selected.content}</div>
 
-  // 상세보기
-  if (selectedInquiry) {
-    return (
-      <div style={{
-        background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
-        borderRadius: '16px', padding: '24px',
-      }}>
-        <button onClick={() => { setSelectedInquiry(null); setShowAnswer(false); }} style={{
-          padding: '6px 16px', borderRadius: '8px',
-          border: '1px solid #4a7c3f', background: 'transparent',
-          color: '#aaa', cursor: 'pointer', fontSize: '0.9rem',
-          fontFamily: "'Jua', sans-serif", marginBottom: '16px',
-        }}>← 목록으로</button>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-          <span style={{
-            background: selectedInquiry.status === '답변완료' ? 'rgba(76,255,114,0.2)' : 'rgba(245,200,66,0.2)',
-            border: `1px solid ${selectedInquiry.status === '답변완료' ? '#4cff72' : '#f5c842'}`,
-            borderRadius: '6px', padding: '2px 10px',
-            color: selectedInquiry.status === '답변완료' ? '#4cff72' : '#f5c842',
-            fontSize: '0.85rem',
-          }}>{selectedInquiry.status}</span>
-          {selectedInquiry.is_secret && <span style={{ color: '#aaa', fontSize: '0.85rem' }}>🔒 비밀글</span>}
-          <h2 style={{ color: '#f5c842', margin: 0 }}>{selectedInquiry.title}</h2>
-        </div>
-        <p style={{ color: '#888', fontSize: '0.85rem', margin: '0 0 24px' }}>
-          {isAdmin ? selectedInquiry.users?.nickname : ''} · {new Date(selectedInquiry.created_at).toLocaleDateString('ko-KR')}
-        </p>
-        <div style={{
-          color: '#ddd', fontSize: '1rem', lineHeight: '1.8',
-          borderTop: '1px solid #4a7c3f', paddingTop: '16px',
-          whiteSpace: 'pre-wrap', marginBottom: '24px',
-        }}>
-          {selectedInquiry.content}
-        </div>
-
-        {/* 답변 */}
-        {selectedInquiry.answer && (
-          <div style={{
-            background: 'rgba(74,124,63,0.1)', border: '1px solid #4a7c3f',
-            borderRadius: '12px', padding: '16px', marginBottom: '16px',
-          }}>
-            <p style={{ color: '#4cff72', fontSize: '0.9rem', margin: '0 0 8px' }}>
-              💬 관리자 답변 · {new Date(selectedInquiry.answered_at).toLocaleDateString('ko-KR')}
-            </p>
-            <p style={{ color: '#ddd', fontSize: '1rem', margin: 0, whiteSpace: 'pre-wrap' }}>
-              {selectedInquiry.answer}
-            </p>
-          </div>
-        )}
-
-        {/* 관리자 답변 입력 */}
-        {isAdmin && !selectedInquiry.answer && (
-          <div>
-            <button onClick={() => setShowAnswer(!showAnswer)} style={{
-              padding: '8px 20px', borderRadius: '8px',
-              border: '1px solid #4a7c3f', background: 'transparent',
-              color: '#4a7c3f', cursor: 'pointer', fontSize: '0.9rem',
-              fontFamily: "'Jua', sans-serif", marginBottom: '8px',
-            }}>
-              {showAnswer ? '▲ 닫기' : '💬 답변하기'}
-            </button>
-            {showAnswer && (
-              <div>
-                <textarea
-                  placeholder="답변을 입력해주세요..."
-                  value={answer}
-                  onChange={e => setAnswer(e.target.value)}
-                  rows={4}
-                  style={{
-                    width: '100%', padding: '10px', borderRadius: '8px',
-                    border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
-                    color: '#fff', fontSize: '0.95rem', outline: 'none',
-                    fontFamily: "'Jua', sans-serif", resize: 'vertical',
-                    boxSizing: 'border-box', marginBottom: '8px',
-                  }}
-                />
-                <button onClick={handleAnswer} style={{
-                  padding: '10px 24px', borderRadius: '8px',
-                  border: 'none', background: '#4a7c3f',
-                  color: '#fff', cursor: 'pointer', fontSize: '1rem',
-                  fontFamily: "'Jua', sans-serif",
-                }}>답변 등록</button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {(selectedInquiry.user_id === profile.id || isAdmin) && (
-          <button onClick={() => handleDelete(selectedInquiry.id)} style={{
-            marginTop: '16px', padding: '8px 20px', borderRadius: '8px',
-            border: '1px solid #ff4444', background: 'transparent',
-            color: '#ff4444', cursor: 'pointer', fontSize: '0.9rem',
-            fontFamily: "'Jua', sans-serif",
-          }}>삭제</button>
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <div style={{
-      background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
-      borderRadius: '16px', padding: '24px',
-    }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-        <h3 style={{ color: '#f5c842', margin: 0, fontSize: '1.2rem' }}>📩 1:1 문의</h3>
-        <button onClick={() => setShowWrite(!showWrite)} style={{
-          padding: '8px 16px', borderRadius: '8px',
-          border: '1px solid #4a7c3f', background: showWrite ? 'rgba(74,124,63,0.4)' : 'rgba(74,124,63,0.2)',
-          color: '#fff', cursor: 'pointer', fontSize: '0.9rem',
-          fontFamily: "'Jua', sans-serif",
-        }}>
-          {showWrite ? '▲ 닫기' : '✏️ 문의하기'}
-        </button>
-      </div>
-
-      {showWrite && (
-        <div style={{
-          background: 'rgba(74,124,63,0.1)', border: '1px solid #4a7c3f',
-          borderRadius: '12px', padding: '16px', marginBottom: '16px',
-        }}>
-          <input
-            placeholder="제목"
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-            style={{
-              width: '100%', padding: '10px', borderRadius: '8px',
-              border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
-              color: '#fff', fontSize: '1rem', outline: 'none',
-              fontFamily: "'Jua', sans-serif", marginBottom: '8px',
-              boxSizing: 'border-box',
-            }}
-          />
-          <textarea
-            placeholder="문의 내용을 입력해주세요..."
-            value={content}
-            onChange={e => setContent(e.target.value)}
-            rows={5}
-            style={{
-              width: '100%', padding: '10px', borderRadius: '8px',
-              border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
-              color: '#fff', fontSize: '0.95rem', outline: 'none',
-              fontFamily: "'Jua', sans-serif", resize: 'vertical',
-              boxSizing: 'border-box', marginBottom: '8px',
-            }}
-          />
-          <label style={{ color: '#aaa', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', marginBottom: '8px' }}>
-            <input
-              type="checkbox"
-              checked={isSecret}
-              onChange={e => setIsSecret(e.target.checked)}
-            />
-            🔒 비밀글
-          </label>
-          {isSecret && (
-            <input
-              type="password"
-              placeholder="비밀번호 설정"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              style={{
-                width: '100%', padding: '10px', borderRadius: '8px',
-                border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)',
-                color: '#fff', fontSize: '1rem', outline: 'none',
-                fontFamily: "'Jua', sans-serif", marginBottom: '8px',
-                boxSizing: 'border-box',
-              }}
-            />
-          )}
-          <button onClick={handleWrite} style={{
-            padding: '10px 24px', borderRadius: '8px',
-            border: 'none', background: '#4a7c3f',
-            color: '#fff', cursor: 'pointer', fontSize: '1rem',
-            fontFamily: "'Jua', sans-serif",
-          }}>등록</button>
+      {/* 채팅 메시지 */}
+      {selected.answer && (
+        <div style={{ background: 'rgba(74,124,63,0.1)', border: '1px solid #4a7c3f', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
+          <p style={{ color: '#4cff72', fontSize: '0.9rem', margin: '0 0 8px' }}>💬 대화 내역</p>
+          <p style={{ color: '#ddd', margin: 0, whiteSpace: 'pre-wrap', fontSize: '0.95rem' }}>{selected.answer}</p>
         </div>
       )}
 
-      {loading ? (
-        <div style={{ color: '#888', textAlign: 'center', padding: '40px' }}>로딩중...</div>
-      ) : inquiries.length === 0 ? (
-        <div style={{ color: '#888', textAlign: 'center', padding: '40px' }}>문의 내역이 없습니다.</div>
-      ) : (
+      {/* 채팅 입력 */}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+        <input placeholder="메시지 입력..." value={chatMsg} onChange={e => setChatMsg(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleChat()}
+          style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)', color: '#fff', outline: 'none', fontFamily: "'Jua', sans-serif" }} />
+        <button onClick={handleChat} style={submitBtn}>전송</button>
+      </div>
+
+      {(selected.username === profile.username || isAdmin) && (
+        <button onClick={() => handleDelete(selected.id)} style={dangerBtn}>삭제</button>
+      )}
+    </div>
+  );
+
+  return (
+    <div style={cardStyle}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+        <h3 style={{ color: '#f5c842', margin: 0 }}>📩 1:1 문의</h3>
+        <button onClick={() => setShowWrite(!showWrite)} style={writeBtn}>{showWrite ? '▲ 닫기' : '✏️ 문의하기'}</button>
+      </div>
+      {showWrite && (
+        <div style={formStyle}>
+          <input placeholder="제목" value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} style={inputStyle} />
+          <textarea placeholder="문의 내용" value={form.content} onChange={e => setForm(p => ({ ...p, content: e.target.value }))} rows={5} style={{ ...inputStyle, resize: 'vertical' }} />
+          <button onClick={handleWrite} style={submitBtn}>등록</button>
+        </div>
+      )}
+      {loading ? <div style={loadingStyle}>로딩중...</div> : inquiries.length === 0 ? <div style={emptyStyle}>문의 내역이 없습니다.</div> : (
         <div>
-          {inquiries.map((inquiry, i) => (
-            <div
-              key={inquiry.id}
-              onClick={() => handleClickInquiry(inquiry)}
-              style={{
-                padding: '14px 16px',
-                borderBottom: i < inquiries.length - 1 ? '1px solid rgba(74,124,63,0.3)' : 'none',
-                cursor: 'pointer', borderRadius: '8px', transition: 'background 0.15s',
-              }}
+          {inquiries.map((inq, i) => (
+            <div key={inq.id} onClick={async () => { const r = await api('GET', `/inquiries/${inq.id}`, null, token); if (r) setSelected(await r.json()); }}
+              style={{ ...listItem, borderBottom: i < inquiries.length - 1 ? '1px solid rgba(74,124,63,0.3)' : 'none' }}
               onMouseEnter={e => e.currentTarget.style.background = 'rgba(74,124,63,0.1)'}
-              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  {inquiry.is_secret && <span style={{ fontSize: '0.85rem' }}>🔒</span>}
                   <span style={{
-                    background: inquiry.status === '답변완료' ? 'rgba(76,255,114,0.2)' : 'rgba(245,200,66,0.2)',
-                    border: `1px solid ${inquiry.status === '답변완료' ? '#4cff72' : '#f5c842'}`,
+                    background: inq.status === '답변완료' ? 'rgba(76,255,114,0.2)' : 'rgba(245,200,66,0.2)',
+                    border: `1px solid ${inq.status === '답변완료' ? '#4cff72' : '#f5c842'}`,
                     borderRadius: '6px', padding: '2px 8px',
-                    color: inquiry.status === '답변완료' ? '#4cff72' : '#f5c842',
-                    fontSize: '0.8rem',
-                  }}>{inquiry.status}</span>
-                  <span style={{ color: '#fff', fontSize: '1rem' }}>
-                    {inquiry.is_secret && inquiry.user_id !== profile.id && !isAdmin ? '🔒 비밀글입니다' : inquiry.title}
-                  </span>
+                    color: inq.status === '답변완료' ? '#4cff72' : '#f5c842', fontSize: '0.8rem',
+                  }}>{inq.status}</span>
+                  <span style={{ color: '#fff' }}>{inq.title}</span>
                 </div>
-                <span style={{ color: '#888', fontSize: '0.8rem' }}>
-                  {new Date(inquiry.created_at).toLocaleDateString('ko-KR')}
-                </span>
+                <span style={{ color: '#888', fontSize: '0.8rem' }}>{new Date(inq.created_at).toLocaleDateString('ko-KR')}</span>
               </div>
-              {isAdmin && (
-                <span style={{ color: '#aaa', fontSize: '0.85rem' }}>{inquiry.users?.nickname}</span>
-              )}
+              {isAdmin && <span style={{ color: '#aaa', fontSize: '0.85rem' }}>{inq.nickname}</span>}
             </div>
           ))}
         </div>
@@ -2328,53 +940,37 @@ function InquiryTab({ profile }) {
   );
 }
 
-// 접속유저 탭
-function OnlineTab() {
-  const [onlineUsers, setOnlineUsers] = useState([]);
+// ── 접속유저 탭 ──────────────────────────────────────────
+function OnlineTab({ token }) {
+  const [users, setUsers] = useState([]);
 
   useEffect(() => {
-    fetchOnlineUsers();
-
-    // 5분 이상 last_seen 없으면 오프라인으로 간주하고 5초마다 갱신
-    const interval = setInterval(fetchOnlineUsers, 5000);
+    const fetch = async () => {
+      const res = await api('GET', '/users/online', null, token);
+      if (!res) return;
+      const data = await res.json();
+      setUsers(data.users || []);
+    };
+    fetch();
+    const interval = setInterval(fetch, 5000);
     return () => clearInterval(interval);
-  }, []);
-
-  const fetchOnlineUsers = async () => {
-    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-    const { data } = await supabase
-      .from('online_users')
-      .select('*')
-      .gte('last_seen', fiveMinAgo)
-      .order('last_seen', { ascending: false });
-    setOnlineUsers(data || []);
-  };
+  }, [token]);
 
   return (
-    <div style={{
-      background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f',
-      borderRadius: '16px', padding: '24px',
-    }}>
-      <h3 style={{ color: '#f5c842', margin: '0 0 16px', fontSize: '1.2rem' }}>
-        🟢 접속중인 유저 ({onlineUsers.length}명)
-      </h3>
-      {onlineUsers.length === 0 ? (
-        <div style={{ color: '#888', textAlign: 'center', padding: '40px' }}>
-          접속중인 유저가 없습니다.
-        </div>
+    <div style={cardStyle}>
+      <h3 style={{ color: '#f5c842', margin: '0 0 16px' }}>🟢 접속중인 유저 ({users.length}명)</h3>
+      {users.length === 0 ? (
+        <div style={emptyStyle}>접속중인 유저가 없습니다.</div>
       ) : (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
-          {onlineUsers.map(user => (
-            <div key={user.id} style={{
+          {users.map(u => (
+            <div key={u.username} style={{
               display: 'flex', alignItems: 'center', gap: '8px',
               background: 'rgba(74,124,63,0.15)', border: '1px solid #4a7c3f',
               borderRadius: '20px', padding: '8px 16px',
             }}>
-              <div style={{
-                width: '8px', height: '8px', borderRadius: '50%',
-                background: '#4cff72', boxShadow: '0 0 6px #4cff72',
-              }} />
-              <span style={{ color: '#fff', fontSize: '0.95rem' }}>{user.nickname}</span>
+              <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#4cff72', boxShadow: '0 0 6px #4cff72' }} />
+              <span style={{ color: '#fff' }}>{u.nickname}</span>
             </div>
           ))}
         </div>
@@ -2382,5 +978,52 @@ function OnlineTab() {
     </div>
   );
 }
+
+// ── 공통 댓글 컴포넌트 ───────────────────────────────────
+function CommentSection({ comments, onAdd, onDelete, comment, setComment, profile }) {
+  return (
+    <div style={{ borderTop: '1px solid #4a7c3f', paddingTop: '16px', marginTop: '16px' }}>
+      <h4 style={{ color: '#f5c842', margin: '0 0 16px' }}>💬 댓글 {comments.length}개</h4>
+      {comments.length === 0 ? (
+        <p style={{ color: '#888', fontSize: '0.9rem', marginBottom: '16px' }}>첫 댓글을 남겨보세요!</p>
+      ) : (
+        <div style={{ marginBottom: '16px' }}>
+          {comments.map(c => (
+            <div key={c.id} style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '8px', padding: '12px', marginBottom: '8px', border: '1px solid rgba(74,124,63,0.2)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span style={{ color: '#f5c842', fontSize: '0.85rem' }}>{c.nickname}</span>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <span style={{ color: '#888', fontSize: '0.75rem' }}>{new Date(c.created_at).toLocaleDateString('ko-KR')}</span>
+                  {c.username === profile.username && (
+                    <button onClick={() => onDelete(c.id)} style={{ padding: '2px 8px', borderRadius: '4px', border: '1px solid #ff4444', background: 'transparent', color: '#ff4444', cursor: 'pointer', fontSize: '0.75rem', fontFamily: "'Jua', sans-serif" }}>삭제</button>
+                  )}
+                </div>
+              </div>
+              <p style={{ color: '#ddd', fontSize: '0.9rem', margin: 0 }}>{c.content}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: '8px' }}>
+        <input placeholder="댓글을 입력해주세요..." value={comment} onChange={e => setComment(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && onAdd()}
+          style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)', color: '#fff', outline: 'none', fontFamily: "'Jua', sans-serif" }} />
+        <button onClick={onAdd} style={submitBtn}>등록</button>
+      </div>
+    </div>
+  );
+}
+
+// ── 공통 스타일 ──────────────────────────────────────────
+const cardStyle = { background: 'rgba(0,0,0,0.78)', border: '2px solid #4a7c3f', borderRadius: '16px', padding: '24px' };
+const inputStyle = { width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #4a7c3f', background: 'rgba(255,255,255,0.1)', color: '#fff', fontSize: '0.95rem', outline: 'none', fontFamily: "'Jua', sans-serif", boxSizing: 'border-box' };
+const formStyle = { background: 'rgba(74,124,63,0.1)', border: '1px solid #4a7c3f', borderRadius: '12px', padding: '16px', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '8px' };
+const submitBtn = { padding: '10px 24px', borderRadius: '8px', border: 'none', background: '#4a7c3f', color: '#fff', cursor: 'pointer', fontSize: '1rem', fontFamily: "'Jua', sans-serif" };
+const writeBtn = { padding: '8px 16px', borderRadius: '8px', border: '1px solid #4a7c3f', background: 'rgba(74,124,63,0.2)', color: '#fff', cursor: 'pointer', fontSize: '0.9rem', fontFamily: "'Jua', sans-serif" };
+const dangerBtn = { padding: '8px 20px', borderRadius: '8px', border: '1px solid #ff4444', background: 'transparent', color: '#ff4444', cursor: 'pointer', fontSize: '0.9rem', fontFamily: "'Jua', sans-serif" };
+const backBtn = { padding: '6px 16px', borderRadius: '8px', border: '1px solid #4a7c3f', background: 'transparent', color: '#aaa', cursor: 'pointer', fontSize: '0.9rem', fontFamily: "'Jua', sans-serif", marginBottom: '16px' };
+const listItem = { padding: '14px 16px', cursor: 'pointer', borderRadius: '8px', transition: 'background 0.15s' };
+const loadingStyle = { color: '#888', textAlign: 'center', padding: '40px' };
+const emptyStyle = { color: '#888', textAlign: 'center', padding: '40px' };
 
 export default Main;
