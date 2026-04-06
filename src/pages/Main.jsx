@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, getToken, getUsername, getNickname, clearToken } from '../apiClient';
+import { api, getToken, clearToken } from '../apiClient';
 import bg from '../assets/background_mygame2.png';
 import frogNormal from '../assets/frog_normal.PNG';
 
@@ -817,7 +817,7 @@ function InquiryTab({ profile, token }) {
   const [form, setForm] = useState({ title: '', content: '' });
   const [chatMsg, setChatMsg] = useState('');
   const [answer, setAnswer] = useState('');
-  const [showAnswer, setShowAnswer] = useState(false);
+  const [setShowAnswer] = useState(false);
   const isAdmin = profile?.role === 'admin';
 
   const fetchInquiries = useCallback(async () => {
@@ -834,16 +834,6 @@ function InquiryTab({ profile, token }) {
     const res = await api('POST', '/inquiries', form, token);
     if (res?.ok) { setForm({ title: '', content: '' }); setShowWrite(false); fetchInquiries(); }
     else { const d = await res.json(); alert(d.detail || '작성 실패'); }
-  };
-
-  const handleAnswer = async () => {
-    const res = await api('PATCH', `/inquiries/${selected.id}/answer`, { answer }, token);
-    if (res?.ok) {
-      setAnswer(''); setShowAnswer(false);
-      const r = await api('GET', `/inquiries/${selected.id}`, null, token);
-      if (r) setSelected(await r.json());
-      fetchInquiries();
-    }
   };
 
   const handleChat = async () => {
