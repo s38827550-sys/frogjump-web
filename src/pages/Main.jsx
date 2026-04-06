@@ -816,8 +816,6 @@ function InquiryTab({ profile, token }) {
   const [showWrite, setShowWrite] = useState(false);
   const [form, setForm] = useState({ title: '', content: '' });
   const [chatMsg, setChatMsg] = useState('');
-  const [answer, setAnswer] = useState('');
-  const [setShowAnswer] = useState(false);
   const isAdmin = profile?.role === 'admin';
 
   const fetchInquiries = useCallback(async () => {
