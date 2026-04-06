@@ -852,7 +852,7 @@ function InquiryTab({ profile, token }) {
 
   if (selected) return (
     <div style={cardStyle}>
-      <button onClick={() => { setSelected(null); setShowAnswer(false); }} style={backBtn}>← 목록으로</button>
+      <button onClick={() => { setSelected(null); }} style={backBtn}>← 목록으로</button>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
         <span style={{
           background: selected.status === '답변완료' ? 'rgba(76,255,114,0.2)' : 'rgba(245,200,66,0.2)',
