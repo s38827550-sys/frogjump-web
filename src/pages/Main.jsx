@@ -137,7 +137,7 @@ function HomeTab({ profile, setProfile, token }) {
     };
     fetchScores();
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = new Date(new Date().getTime() + 9 * 60 * 60 * 1000).toISOString().split('T')[0];
     if (profile.last_attendance === today) setAttended(true);
   }, [profile, token]);
 
